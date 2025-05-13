@@ -7,7 +7,12 @@ import math
 import pandas as pd 
 from amlvae.models.VAE import VAE
 import tempfile
-from ray.tune import Checkpoint
+
+try: 
+    from ray.tune import Checkpoint
+except: 
+    from ray.train import Checkpoint
+    
 from ray import tune
 import os
 

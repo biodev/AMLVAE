@@ -29,6 +29,7 @@ dependencies:
     - gseapy
     - statsmodels
     - snakemake
+    - umap
     - pip
     - pip:
         - ipykernel
