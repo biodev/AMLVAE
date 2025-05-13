@@ -28,8 +28,9 @@ dependencies:
     - openpyxl
     - gseapy
     - statsmodels
+    - snakemake
     - pip
     - pip:
         - ipykernel
         - umap-learn
-        - -e .
+        - -e ../../.
