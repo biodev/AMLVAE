@@ -1,0 +1,135 @@
+#################################################################
+# AML‑VAE • Snakemake workflow
+#################################################################
+import datetime, pathlib, textwrap
+
+# ----------------------------------------------------------------
+# Config & convenience shortcuts
+# ----------------------------------------------------------------
+configfile: "config.yaml"
+
+run_id   = config["run_id"] or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+wdir     = f"../runs/{run_id}"
+
+DATA     = config["data_dir"]
+PROC_OUT = f"{wdir}/proc"
+TUNE_OUT = f"{wdir}/tune"
+TRAIN_OUT= f"{wdir}/train"
+EVAL_OUT = f"{wdir}/eval"
+
+DATASET_NAME = config["proc"]["dataset_name"]
+
+# ----------------------------------------------------------------
+# Rule: all (final targets)
+# ----------------------------------------------------------------
+rule all:
+    input:
+        f"{PROC_OUT}/{DATASET_NAME}_expr.csv",
+        f"{TUNE_OUT}/amlvae_tune_results.csv",
+        f"{TRAIN_OUT}/model.pt",
+        f"{EVAL_OUT}/eval.csv",
+        f"{EVAL_OUT}/embedding_umap_plot__tcga_cluster.png"
+
+# ----------------------------------------------------------------
+# Rule: preprocess expression data
+# ----------------------------------------------------------------
+rule preprocess:
+    output:
+        expr   = f"{PROC_OUT}/{DATASET_NAME}_expr.csv",
+        splits = f"{PROC_OUT}/{DATASET_NAME}_partitions.pt"
+    params:
+        script = config['scripts']['proc'],
+        args = f"--data {DATA} " +\
+            f"--out {PROC_OUT} " +\
+            f"--target_type {config['proc']['target_type']} " +\
+            f"--gene_selection_method {config['proc']['gene_selection_method']} " +\
+            f"--num_top_genes {config['proc']['num_top_genes']} " +\
+            f"--norm_method {config['proc']['norm_method']}"
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        "python {params.script} {params.args}"
+
+# ----------------------------------------------------------------
+# Rule: hyper‑parameter search
+# ----------------------------------------------------------------
+rule tune:
+    input:
+        expr = rules.preprocess.output.expr
+    output:
+        csv = f"{TUNE_OUT}/amlvae_tune_results.csv"
+    params:
+        script = config['scripts']['tune'],
+        args =  f"--data {DATA} "+\
+                f"--out {TUNE_OUT} "+\
+                f"--proc {PROC_OUT} "+\
+                f"--target_metric {config['tune']['target_metric']} "+\
+                f"--num_samples {config['tune']['num_samples']} "+\
+                f"--patience {config['tune']['patience']} "+\
+                f"--gpus {config['tune']['gpus']} "+\
+                f"--cpus {config['tune']['cpus']} "+\
+                f"--epochs {config['tune']['epochs']} "+\
+                f"--n_latent {config['n_latent']} "+\
+                f"--dataset_name {config['proc']['dataset_name']}"
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        "python {params.script} {params.args}"
+
+# ----------------------------------------------------------------
+# Rule: final training with chosen hyper‑params
+# ----------------------------------------------------------------
+rule train:
+    input:
+        expr = rules.preprocess.output.expr,
+        tune = rules.tune.output.csv
+    output:
+        model = f"{TRAIN_OUT}/model.pt"
+    conda:
+        "../envs/amlvae.yaml"
+    params:
+        script = config['scripts']['train']
+    run: 
+        from snakemake.shell import shell
+        from amlvae.utils.tune_parsing import best_config, config_to_cli
+
+        target_metric = 'val_' + config['tune']['target_metric']
+        cfg = best_config(input.tune, metric=target_metric)
+        cli = config_to_cli(cfg)
+
+        print(f"Best config: {cfg}")
+        print(f"CLI: {cli}")
+
+        shell(f"python {params.script} --data {DATA} --proc {PROC_OUT} --out {TRAIN_OUT} {cli} --epochs {config['train']['epochs']} --patience {config['train']['patience']} --dataset_name {config['proc']['dataset_name']}")
+
+# ----------------------------------------------------------------
+# 2.  Rule: evaluate model & make UMAP plots
+# ----------------------------------------------------------------
+rule evaluate:
+    input:
+        # pull the artefacts we need to guarantee dependency order
+        model  = rules.train.output.model,
+        expr   = rules.preprocess.output.expr,        # used by eval.py
+        splits = rules.preprocess.output.splits
+    output:
+        csv   = f"{EVAL_OUT}/eval.csv",
+        plots = expand(
+            f"{EVAL_OUT}/embedding_umap_plot__{{label}}.png",
+            label=[
+                "tcga_cluster",
+                "fabBlastMorphology",
+                "consensusAMLFusions",
+                "overallSurvival",
+            ]
+        )
+    conda:
+        "../envs/amlvae.yaml"
+    params:
+        script = config['scripts']['eval']
+
+    conda:
+        "envs/amlvae.yaml"
+    shell:
+        """
+        python {params.script} --data {DATA} --proc {PROC_OUT} --out  {EVAL_OUT} --model_path {input.model}
+        """

@@ -1,0 +1,33 @@
+# Unique tag for this run – use anything you like
+run_id: "aml_tpm_variance_zscore_1000_latent12"
+
+# Global
+data_dir: "../../../data"
+n_latent: 12
+
+scripts:
+  proc: "../scripts/proc.py"            
+  train: "../scripts/train.py"
+  tune: "../scripts/tune.py"
+  eval: "../scripts/eval.py"
+
+proc:                      # ---------- proc.py arguments ----------
+  target_type: "tpm_unstranded"       # fpkm
+  gene_selection_method: "variance"   # 'variance', 'tcga'
+  num_top_genes: 1000 
+  norm_method: "zscore"               # 'zscore', minmax 
+  dataset_name: "aml"               
+  gene_id_type: "gene_name"          # 'gene_name', 'gene_id' 
+  sample_id_type: "id"               # 'id', 'sample_id' 
+
+tune:                      # ---------- tune.py arguments ----------
+  target_metric: "r2"        # elbo | mse | r2
+  num_samples: 5
+  patience: 100
+  gpus: 1
+  cpus: 10
+  epochs: 1000
+
+train:                     # ---------- train.py arguments ----------
+  epochs: 1000
+  patience: 100

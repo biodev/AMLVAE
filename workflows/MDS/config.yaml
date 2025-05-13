@@ -1,0 +1,73 @@
+# Unique tag for this run – use anything you like
+run_id: "mds_fpkm_variance_zscore_1000_latent12"
+
+# Global
+data_dir: "../../../data"
+n_latent: 12
+
+scripts:
+  proc: "../scripts/proc.py"            
+  train: "../scripts/train.py"
+  eval: "../scripts/eval.py"
+  partition: "../scripts/partition.py" 
+  distance: "../scripts/distances.py"
+  snf: "../scripts/SNF.py"
+
+# ----------------------------------------------------------------
+# Cross‑validation partitioning
+# ----------------------------------------------------------------
+partition:
+  fpath:     "../../../data/mds_dummy.csv" 
+  out_dir:      "../folds"            # will create fold_0/, fold_1/, …
+  id_type_name: "array_id"
+  k:            10
+  seed:         0
+  n_val:        25
+
+
+# ----------------------------------------------------------------
+# processing script
+# ----------------------------------------------------------------
+proc:                      # ---------- proc.py arguments ----------
+  target_type: "FPKM"       # fpkm
+  gene_selection_method: "variance"   # 'variance', 'tcga'
+  num_top_genes: 1000 
+  norm_method: "zscore"               # 'zscore', minmax 
+  dataset_name: "mds"               
+  gene_id_type: "gene_id"          # 'gene_name', 'gene_id' 
+  sample_id_type: "array_id"               # 'id', 'sample_id' 
+
+train:                     # ---------- train.py arguments ----------
+  epochs:         1000
+  patience:       100
+  n_hidden:       512
+  n_latent:       12          # override if you want a different latent dim
+  n_layers:       2
+  norm:           "layer"     # "batch", "none", …
+  variational:    True
+  anneal:         False
+  aggressive_updates: False
+  dropout:        0.0
+  nonlin:         "elu"
+  lr:             1e-4
+  l2:             0.0
+  beta:           1.0
+  batch_size:     256
+
+
+# ----------------------------------------------------------------
+# compute pairwise distances and embed all samples 
+# ----------------------------------------------------------------
+distance:
+  metric: "euclidean"          # any metric accepted by sklearn.pairwise_distances
+
+
+# ----------------------------------------------------------------
+# similarity‑network‑fusion (SNF) script
+# ----------------------------------------------------------------
+snf:
+  k:        10      # k‑nearest neighbours
+  mu:       0.5     # bandwidth scale
+  T:        25      # diffusion iterations
+  edge_thr_q: 0.95    # prune edges below this weight
+  seed:     1      # RNG seed for layouts / reproducibility

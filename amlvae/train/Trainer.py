@@ -1,89 +1,200 @@
 
 
 import torch 
+import numpy as np 
+from sklearn.metrics import r2_score
+import math 
+import pandas as pd 
+from amlvae.models.VAE import VAE
+import tempfile
+from ray.tune import Checkpoint
+from ray import tune
+import os
 
-class Trainer: 
+def freeze_(model):
+    for param in model.parameters():
+        param.requires_grad = False 
 
-    def __init__(self, model):
+def unfreeze_(model):
+    for param in model.parameters():
+        param.requires_grad = True
 
-        self.model = model
+def check_convergence(
+    losses: list[float],
+    patience: int = 5,           # steps with no improvement → stop
+    min_delta: float = 1e-4,     # “improvement” means drop ≥ min_delta
+    max_steps: int = 50          # hard safety cap
+) -> bool:
+    """
+    Return True when training has converged.
 
-    def epoch(self, X, optim, batch_size=128, beta=1, eval=False, device='cpu'):
-        '''
-        run one epoch 
-        '''
-        
-        if eval:
-            self.model.eval()
-        else:
-            self.model.train()
+    Converged ⇔
+    • Best loss hasn't improved by ≥ min_delta for `patience` steps, OR
+    • We already took `max_steps` steps (safety guard).
+    """
+    n = len(losses)
+    if n == 0:
+        return False            # nothing to judge yet
 
-        epoch_loss = 0
-        if eval: xs = [] ; xhats = []
-        with torch.set_grad_enabled(not eval):
+    # --- Hard upper-bound on iterations -------------------------------------
+    if n >= max_steps:
+        return True
 
-            if eval: 
-                ixs_splits = torch.split(torch.arange(len(X)), batch_size)
-            else:
-                ixs_splits = torch.split(torch.randperm(len(X)), batch_size)
+    # --- Patience rule -------------------------------------------------------
+    best_so_far = np.min(losses)
+    best_step  = np.argmin(losses)
+
+    # Has the best loss improved in the last `patience` iterations?
+    steps_since_best = n - 1 - best_step
+    if steps_since_best < patience:
+        return False            # still improving frequently enough
+
+    # Even if we haven’t beaten the *absolute* best lately,
+    # check if the *recent* improvement is ≥ min_delta.
+    recent_window = losses[-patience-1:-1]   # last `patience` old points
+    if np.min(recent_window) - losses[-1] >= min_delta:
+        return False            # we *did* improve in that span
+
+    return True                 # no meaningful drop for `patience` steps
 
 
-            for ixs in ixs_splits:
-                
-                x = X[ixs]
-                x = x.to(device)
+class Trainer(): 
 
-                if not eval: 
-                    optim.zero_grad()
+    def __init__(self, root, dataset_name='aml', checkpoint=False, log_every=250, epochs=500, verbose=False, patience=100, return_best_model=False): 
 
-                out = self.model(x)
-                loss = self.model.loss(x, beta=beta, **out)
-                
-                if not eval: 
+        data = pd.read_csv(f'{root}/{dataset_name}_expr.csv')
+        data = data.set_index(data.columns[0])
+        partitions = torch.load(f'{root}/{dataset_name}_partitions.pt', weights_only=False)
+        self.X_train = torch.tensor( 
+            data.loc[partitions['train_ids'], :].values, dtype=torch.float32
+        )
+        self.X_val = torch.tensor(
+            data.loc[partitions['val_ids'], :].values, dtype=torch.float32
+        )
+        self.X_test = torch.tensor(
+            data.loc[partitions['test_ids'], :].values, dtype=torch.float32
+        )
+
+        self.checkpoint = checkpoint
+        self.epochs = epochs
+        self.log_every = log_every
+        self.verbose = verbose
+        self.patience = patience
+        self.return_best_model = return_best_model
+
+    def train_epoch(self, model, optim, batch_size, device, beta, aggresive_updates): 
+        model.train()
+        for ixs in torch.split(torch.randperm(len(self.X_train)), batch_size):
+
+            if aggresive_updates:
+                freeze_(model.decoder)
+                converged = False; losses = [] 
+                while not converged:
+                    ixs = torch.randperm(len(self.X_train))
+                    x = self.X_train[ixs].to(device)
+                    out = model(x)
+                    loss, mse, kld = model.loss(x, beta=beta, **out)
                     loss.backward()
+                    losses.append(loss.item())
                     optim.step()
+                    optim.zero_grad()
+                    converged = check_convergence(losses) 
+                unfreeze_(model.decoder)
+            optim.zero_grad()
+            x = self.X_train[ixs].to(device)
+            out = model(x)
+            loss, mse, kld = model.loss(x, beta=beta, **out)
+            loss.backward()
+            optim.step()
+        
 
-                epoch_loss += loss.item()
-                if eval: 
-                    xs.append(x)
-                    xhats.append(out['xhat'])
+    def eval(self, model, device, partition='val'): 
 
-        epoch_loss /= len(ixs_splits)
+        if partition == 'train':
+            X = self.X_train
+        elif partition == 'val':
+            X = self.X_val
+        elif partition == 'test':
+            X = self.X_test
+        else:
+            raise ValueError(f'Unknown partition: {partition}')
+        
+        model.eval() 
+        with torch.no_grad():
+            out = model(X.to(device))
+            loss, mse, kld = model.loss(X.to(device), beta=0, **out)
+            r2 = r2_score(X.cpu().numpy(), out['xhat'].cpu().numpy(), multioutput='variance_weighted')
+        return mse.item(), r2, loss.item(), kld.item()
 
-        if eval: 
-            xs = torch.cat(xs, dim=0)
-            xhats = torch.cat(xhats, dim=0)
-            metrics = self.model.eval_(xs, xhats)
-        else: 
-            metrics = {}
 
-        return epoch_loss, metrics 
-    
-    def train(self, X_train, X_val, epochs, batch_size=128, beta=1, lr=1e-3, verbose=True):
+
+    def __call__(self, config):
+
+        model_kwargs = {
+            'input_dim'   : self.X_train.size(1),
+            'hidden_dim'  : config['n_hidden'],
+            'n_layers'    : config['n_layers'],
+            'latent_dim'  : config['n_latent'],
+            'norm'        : config['norm'],
+            'variational' : config['variational'],
+            'dropout'     : config['dropout'],
+            'nonlin'      : config['nonlin'],
+        }
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        optim = torch.optim.Adam(self.model.parameters(), lr=lr)
-        self.model.to(device)
+        model = VAE(**model_kwargs).to(device)
+        optim = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['l2'])
 
-        best_state = None 
-        best_loss = float('inf')
+        best_elbo = float('inf')
+        patience_count = 0 
+        best_model = None 
 
-        for epoch in range(epochs):
-            train_loss, _ = self.epoch(X_train, optim, batch_size, beta, eval=False, device=device)
-            val_loss, val_metrics = self.epoch(X_val, None, batch_size, beta, eval=True, device=device)
+        T = int(self.epochs*0.75)
+        for epoch in range(self.epochs): 
 
-            if verbose:
-                val_str = ' | '.join([f'{k}: {v:.4f}' for k, v in val_metrics.items()])
-                print(f'epoch: {epoch+1}, train loss: {train_loss:.4f}, val loss: {val_loss:.4f} ||>>val>>| {val_str}', end='\r')
+            if config['anneal']: 
+                if epoch < T:
+                    fraction = epoch / T
+                    beta = 0.5 * (1 - math.cos(fraction * math.pi)) * config['beta']
+                else:
+                    beta = config['beta'] 
+            else: 
+                beta = config['beta']
 
-            if val_metrics['MSE'] < best_loss:
-                best_loss = val_metrics['MSE']
-                best_state = self.model.state_dict()
+            self.train_epoch(
+                model, optim, config['batch_size'], device, beta, config['aggresive_updates']
+            )
+            mse, r2, elbo, kld = self.eval(
+                model, device, partition='val'
+            )
 
-        self.best_state = best_state
+            if elbo < best_elbo:
+                best_elbo = elbo
+                best_model = {k:v.detach().cpu() for k,v in model.state_dict().items()}
+                patience_count = 0
+            else: 
+                patience_count += 1
 
-    def get_best_model(self): 
-        model = self.model 
-        model.load_state_dict(self.best_state)
-        model.cpu()
-        return model
+            if self.checkpoint:
+                with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
+                    checkpoint = None
+                    if (epoch + 1) % self.log_every == 0:
+                        torch.save(
+                            model.state_dict(),
+                            os.path.join(temp_checkpoint_dir, "model.pth")
+                        )
+                        checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
+                    tune.report({"val_mse": mse, "val_r2":r2, 'val_elbo':elbo, 'val_kld':kld}, checkpoint=checkpoint)
+
+            if self.verbose: print(f'epoch: {epoch}, val mse: {mse:.4f}, val r2: {r2:.2f}, kld: {kld:.2f}, beta: {beta:.2E}', end='\r')
+
+            if patience_count > self.patience:
+                break              
+
+        model.load_state_dict(best_model)
+
+        if self.return_best_model:
+            return model
+        else: 
+            return
+        

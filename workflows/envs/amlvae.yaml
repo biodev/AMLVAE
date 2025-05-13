@@ -1,0 +1,35 @@
+
+name: amlvae
+
+channels: 
+    - pytorch 
+    - nvidia 
+    - pyg
+    - conda-forge
+    - defaults 
+    - bioconda
+
+dependencies:
+    - python=3.12
+    - matplotlib
+    - pytorch
+    - pytorch-cuda
+    - seaborn
+    - scikit-learn
+    - h5py
+    - scipy
+    - numpy
+    - ray-default 
+    - ray-tune
+    - hyperopt
+    - ipywidgets
+    - captum
+    - shap
+    - openpyxl
+    - gseapy
+    - statsmodels
+    - pip
+    - pip:
+        - ipykernel
+        - umap-learn
+        - -e .
