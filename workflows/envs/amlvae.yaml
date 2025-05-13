@@ -10,7 +10,7 @@ channels:
     - bioconda
 
 dependencies:
-    - python=3.12
+    - python
     - matplotlib
     - pytorch
     - pytorch-cuda
