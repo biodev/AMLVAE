@@ -42,12 +42,12 @@ train:                     # ---------- train.py arguments ----------
   patience:       100
   n_hidden:       512
   n_latent:       12          # override if you want a different latent dim
-  n_layers:       2
+  n_layers:       4
   norm:           "layer"     # "batch", "none", …
   variational:    True
   anneal:         False
   aggressive_updates: False
-  dropout:        0.0
+  dropout:        0.5
   nonlin:         "elu"
   lr:             1e-4
   l2:             0.0
@@ -66,8 +66,8 @@ distance:
 # similarity‑network‑fusion (SNF) script
 # ----------------------------------------------------------------
 snf:
-  k:        10      # k‑nearest neighbours
+  k:        20      # k‑nearest neighbours
   mu:       0.5     # bandwidth scale
-  T:        25      # diffusion iterations
-  edge_thr_q: 0.95    # prune edges below this weight
-  seed:     1      # RNG seed for layouts / reproducibility
+  T:        20      # diffusion iterations
+  edge_thr_q: 0.9    # prune edges below this weight
+  seed:     0      # RNG seed for layouts / reproducibility

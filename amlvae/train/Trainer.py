@@ -9,10 +9,11 @@ from amlvae.models.VAE import VAE
 import tempfile
 
 try: 
+    # versioning issues 
     from ray.tune import Checkpoint
 except: 
     from ray.train import Checkpoint
-    
+
 from ray import tune
 import os
 
