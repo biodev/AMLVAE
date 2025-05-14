@@ -305,7 +305,7 @@ rule clin_viz:
         n_neighbors = CLINCFG["n_neighbors"],
         min_dist    = CLINCFG["min_dist"],
         metric      = CLINCFG["metric"],
-        clin_vars   = shlex.quote(" ".join(CLINCFG["clin_vars"])),
+        clin_vars   = shlex.quote("<::>".join(CLINCFG["clin_vars"])),
         seed        = CLINCFG["seed"]
     conda:
         "../envs/amlvae.yaml"

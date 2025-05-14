@@ -25,11 +25,14 @@ def get_args():
                             help='minimum distance for UMAP')
     argparser.add_argument('--metric', type=str, default='euclidean',
                             help='metric for UMAP')
-    argparser.add_argument('--clin_vars', type=str, nargs='+', default=['Histology EN', 'Age', 'Clinical Status EN', 'WBC', 'Clinical Diagnosis', 'Overall survival (days)', 'TP53'],
+    argparser.add_argument('--clin_vars', type=str, default='',
                             help='clinical variables to plot')
     argparser.add_argument('--seed', type=int, default=42,
                             help='random seed for reproducibility')
-    return argparser.parse_args()
+    args = argparser.parse_args()
+
+    args.clin_vars = args.clin_vars.split('<::>')
+    return args 
 
 
 if __name__ == '__main__': 
@@ -47,15 +50,18 @@ if __name__ == '__main__':
     # seed 
     np.random.seed(args.seed)
 
+    print('loading data...')
     z = pd.read_csv(args.z_path, index_col=0) 
     clin = pd.read_excel(args.clin_path, sheet_name=0)
 
+    print('running umap...')
     reducer = umap.UMAP(n_neighbors=args.n_neighbors, min_dist=args.min_dist, n_components=2, metric=args.metric)
     u = reducer.fit_transform(z.values) 
     u = pd.DataFrame(u, index=z.index, columns=['u1','u2']).assign(**{'MLL ID': z.index}) 
     u = u.merge(clin, on='MLL ID', how='left') 
 
     for clin_var in args.clin_vars: 
+        print('plotting UMAP for', clin_var)
 
         try: 
             plt.figure(figsize=(8, 8)) 
