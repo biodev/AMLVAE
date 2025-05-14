@@ -71,7 +71,7 @@ if __name__ == '__main__':
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
             plt.xlabel('UMAP 1')
             plt.ylabel('UMAP 2')
-            plt.savefig(f'{args.out}/umap_{clin_var}.png', dpi=300)
+            plt.savefig(f'{args.out}/umap_{clin_var}.png', dpi=300, bbox_inches='tight')
             plt.close()
         except: 
             print(f'\tError plotting {clin_var}. Skipping...')
