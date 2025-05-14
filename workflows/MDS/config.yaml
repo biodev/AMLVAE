@@ -12,6 +12,7 @@ scripts:
   partition: "../scripts/partition.py" 
   distance: "../scripts/distances.py"
   snf: "../scripts/SNF.py"
+  clin_viz: "../scripts/clin_viz.py"
 
 # ----------------------------------------------------------------
 # Cross‑validation partitioning
@@ -60,6 +61,22 @@ train:                     # ---------- train.py arguments ----------
 # ----------------------------------------------------------------
 distance:
   metric: "euclidean"          # any metric accepted by sklearn.pairwise_distances
+
+
+# ----------------------------------------------------------------
+# clinical‑feature UMAP visualisation
+# ----------------------------------------------------------------
+clin_viz:
+
+  z_path: "../runs/{run_id}/snf/{dataset}_z.csv" 
+  clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
+  n_neighbors: 15
+  min_dist:    0.1
+  metric:      "euclidean"
+  clin_vars: ["Histology EN", "Age", "Clinical Status EN",
+              "WBC", "Clinical Diagnosis",
+              "Overall survival (days)", "TP53"]
+  seed: 0
 
 
 # ----------------------------------------------------------------

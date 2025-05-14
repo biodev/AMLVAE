@@ -42,6 +42,7 @@ rule all:
         [f"../runs/{run_id}/fold_{i}/train/model.pt" for i in FOLDS],
         [f"../runs/{run_id}/fold_{i}/eval/eval.csv" for i in FOLDS],
         [f"../runs/{run_id}/fold_{i}/distance/{config['proc']['dataset_name']}_dist.csv" for i in FOLDS],
+        [f"../runs/{run_id}/fold_{i}/viz/clin_viz_complete.txt" for i in FOLDS],
         f"../runs/{run_id}/snf/{config['proc']['dataset_name']}_edge_index.npy",
         f"../runs/{run_id}/snf/{config['proc']['dataset_name']}_edge_weight.npy",
         f"../runs/{run_id}/snf/{config['proc']['dataset_name']}_snf_graph.png"
@@ -285,4 +286,42 @@ rule snf:
             --T         {params.T} \
             --edge_thr_q  {params.edge_thr_q} \
             --seed      {params.seed}
+        """
+
+#################################################################
+# 7.  UMAP coloured by clinical variables (per fold)
+#################################################################
+CLINCFG = config["clin_viz"]
+
+rule clin_viz:
+    input:
+        # z‑embedding produced by distance.py inside each fold directory
+        z_file    = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/distance/{PROCCFG['dataset_name']}_z.csv",
+        # clinical metadata workbook is shared
+        clin_file = CLINCFG["clin_path"]
+    output:
+        # one “done” flag per fold
+        complete_flag = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/viz/clin_viz_complete.txt"
+    params:
+        script      = config["scripts"]["clin_viz"],
+        out_dir     = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/viz",
+        n_neighbors = CLINCFG["n_neighbors"],
+        min_dist    = CLINCFG["min_dist"],
+        metric      = CLINCFG["metric"],
+        clin_vars   = " ".join(CLINCFG["clin_vars"]),
+        seed        = CLINCFG["seed"]
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        mkdir -p {params.out_dir}
+        python {params.script} \
+            --z_path {input.z_file} \
+            --clin_path {input.clin_file} \
+            --out {params.out_dir} \
+            --n_neighbors {params.n_neighbors} \
+            --min_dist {params.min_dist} \
+            --metric {params.metric} \
+            --clin_vars {params.clin_vars} \
+            --seed {params.seed}
         """
