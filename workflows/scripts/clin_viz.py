@@ -67,10 +67,14 @@ if __name__ == '__main__':
             plt.figure(figsize=(8, 8)) 
             sbn.scatterplot(data=u, x='u1', y='u2', hue=clin_var)
             plt.title(f'UMAP; {clin_var}')
+            # place legend to the right of the plot
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+            plt.xlabel('UMAP 1')
+            plt.ylabel('UMAP 2')
             plt.savefig(f'{args.out}/umap_{clin_var}.png', dpi=300)
             plt.close()
         except: 
-            raise 
+            print(f'\tError plotting {clin_var}. Skipping...')
 
     # mark complete. 
     with open(f'{args.out}/clin_viz_complete.txt', 'w') as f: 
