@@ -295,13 +295,10 @@ CLINCFG = config["clin_viz"]
 
 rule clin_viz:
     input:
-        # z‑embedding produced by distance.py inside each fold directory
         z_file    = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/distance/{PROCCFG['dataset_name']}_z.csv",
-        # clinical metadata workbook is shared
         clin_file = CLINCFG["clin_path"]
     output:
-        # one “done” flag per fold
-        complete_flag = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/viz/clin_viz_complete.txt"
+        complete_flag = f"../runs/{run_id}/fold_{{fold}}/viz/clin_viz_complete.txt"
     params:
         script      = config["scripts"]["clin_viz"],
         out_dir     = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/viz",
