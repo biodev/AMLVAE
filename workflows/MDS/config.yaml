@@ -111,4 +111,5 @@ snf:
   k:        20      # k‑nearest neighbors
   mu:       0.5     # bandwidth scale
   T:        20      # diffusion iterations
-  seed:     0      # RNG seed for layouts / reproducibility
+  seed:     0       # RNG seed for layouts / reproducibility
+  edge_thresh_q: 0.95
