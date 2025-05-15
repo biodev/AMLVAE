@@ -3,7 +3,7 @@ run_id: "mds_fpkm_variance_zscore_1000_latent12"
 
 # Global
 data_dir: "../../../data"
-n_latent: 12
+n_latent: 64
 
 scripts:
   proc: "../scripts/proc.py"            
@@ -46,7 +46,6 @@ train:
   epochs:         1000
   patience:       100
   n_hidden:       2048
-  n_latent:       64          # override if you want a different latent dim
   n_layers:       1
   norm:           "layer"     # "batch", "none", …
   variational:    True

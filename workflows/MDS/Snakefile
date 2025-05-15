@@ -138,7 +138,7 @@ rule train:
         epochs    = TRAINCFG["epochs"],
         patience  = TRAINCFG["patience"],
         n_hidden  = TRAINCFG["n_hidden"],
-        n_latent  = TRAINCFG.get("n_latent", config["n_latent"]),
+        n_latent  = config["n_latent"],
         n_layers  = TRAINCFG["n_layers"],
         norm      = TRAINCFG["norm"],
         variational        = TRAINCFG["variational"],
