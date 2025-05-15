@@ -121,7 +121,10 @@ class ExprProcessor:
         sample_id_col: str = 'id',):
         
         # 1) pivot to get raw expression
-        self.raw_expr = pivot_expression(expr_long, value_col=target, gene_col=gene_col, sample_id_col=sample_id_col)
+        self.raw_expr = pivot_expression(expr_long, 
+                                         value_col      = target, 
+                                         gene_col       = gene_col, 
+                                         sample_id_col  = sample_id_col)
         self.sample_ids = list(self.raw_expr.index)
         self.target = target
         self.gene_col = gene_col

@@ -168,9 +168,8 @@ def similarity_network_fusion(
     W_fused = sum(Ps) / V
     W_fused = (W_fused + W_fused.T) / 2
 
-    edge_thr = np.quantile(W_fused.ravel(), edge_thr_q).item() 
+    edge_thr = np.quantile(W_fused.ravel(), edge_thr_q).item()
     print(f'edge weight threshold [quantile: {edge_thr_q:.2f}]: {edge_thr}')
-
     W_fused[W_fused < edge_thr] = 0.0
 
     coo = coo_matrix(W_fused)

@@ -29,7 +29,7 @@ partition:
 # ----------------------------------------------------------------
 # processing script
 # ----------------------------------------------------------------
-proc:                      # ---------- proc.py arguments ----------
+proc:
   target_type: "FPKM"       # fpkm
   gene_selection_method: "variance"   # 'variance', 'tcga'
   num_top_genes: 1000 
@@ -38,17 +38,21 @@ proc:                      # ---------- proc.py arguments ----------
   gene_id_type: "gene_id"          # 'gene_name', 'gene_id' 
   sample_id_type: "array_id"               # 'id', 'sample_id' 
 
-train:                     # ---------- train.py arguments ----------
+
+# ----------------------------------------------------------------
+# processing script
+# ----------------------------------------------------------------
+train:
   epochs:         1000
   patience:       100
-  n_hidden:       512
-  n_latent:       12          # override if you want a different latent dim
-  n_layers:       4
+  n_hidden:       2048
+  n_latent:       64          # override if you want a different latent dim
+  n_layers:       1
   norm:           "layer"     # "batch", "none", …
   variational:    True
   anneal:         False
   aggressive_updates: False
-  dropout:        0.5
+  dropout:        0.25
   nonlin:         "elu"
   lr:             1e-4
   l2:             0.0
@@ -70,12 +74,26 @@ clin_viz:
 
   z_path: "../runs/{run_id}/snf/{dataset}_z.csv" 
   clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
-  n_neighbors: 5
+  n_neighbors: 15
   min_dist:    0.1
   metric:      "cosine"
-  # options: ['MLL ID', 'Gender 1=female;2=male', 'Age', 'Final Diagnosis', 'Status EN', 'Clinical Status EN', 'sample date', 'Analyses', 'WBC', 'HB', 'Platelets', 'other material 1', 'other material 2', 'Heparin Staining in Z', 'Mat in Z EN', 'Z Diagnosis', 'Z Report', '% Blasts in PB', '% Blasts im BM', '% Neutrophils in PB', 'C Diagnosis', 'C Report', 'Karyotype 1', 'K1 Cells', 'Karyotype 2', 'K2 Cells', 'Karyotype 3', 'K3 Cells', 'Karyotype 4', 'K4 Cells', 'Karyotype 5', 'K5 Cells', 'Karyotype 6', 'K6 Cells', 'FISH Diagnosis', 'FISH Report', 'FISH ISCN Formula 1', 'FISH ISCN Formula 2', 'FISH ISCN Formula 3', 'FISH ISCN Formula 4', 'M Diagnosis', 'M Report', 'M Report EN', 'I Diagnosis', 'I Report', 'I Report EN', 'Clinical Diagnosis', 'Date of Diagnosis', 'Overall survival (days)', 'Prognostic Score Name', 'Prognostic Score Value', 'Date Last FU', 'Date of Death', 'Cause of Death', 'Cause of Death EN', 'Familial Disease', 'Histology', 'Histology EN', 'Date of Relapse', 'Date of Remission', 'ASXL1', 'ASXL2', 'ATRX', 'BCOR', 'BCORL1', 'BRAF', 'CALR', 'CBL', 'CEBPA', 'CSF3R', 'CSNK1A1', 'CUX1', 'DDX41', 'DNMT3A', 'ETNK1', 'ETV6', 'EZH2', 'FBXW7', 'FLT3', 'GATA1', 'GATA2', 'GNB1', 'IDH1', 'IDH2', 'IL6R', 'JAK2', 'KIT', 'KRAS', 'MPL', 'MYD88', 'NF1', 'NOTCH1', 'NPM1', 'NRAS', 'PDGFRA', 'PDGFRB', 'PHF6', 'PIGA', 'PPM1D', 'PRPF8', 'PTEN', 'PTPN11', 'RAD21', 'RUNX1', 'SETBP1', 'SF1', 'SF3A1', 'SF3B1', 'SH2B3', 'SMC1A', 'SMC3', 'SRSF2', 'STAG2', 'SUZ12', 'TET2', 'TP53', 'U2AF1', 'U2AF2', 'UBA1', 'WT1', 'ZEB2', 'ZRSR2']
-  clin_vars: ["Histology EN", "Age", "Clinical Status EN", "WBC", "Clinical Diagnosis", 
-              "Overall survival (days)", "TP53", "sample date", 'ASXL1', 'ASXL2', 'ATRX', 
+  # options: ['MLL ID', 'Gender 1=female;2=male', 'Age', 'Final Diagnosis', 'Status EN', 'Clinical Status EN', 
+  # 'sample date', 'Analyses', 'WBC', 'HB', 'Platelets', 'other material 1', 'other material 2', 'Heparin Staining in Z', 
+  # 'Mat in Z EN', 'Z Diagnosis', 'Z Report', '% Blasts in PB', '% Blasts im BM', '% Neutrophils in PB', 'C Diagnosis', 
+  # 'C Report', 'Karyotype 1', 'K1 Cells', 'Karyotype 2', 'K2 Cells', 'Karyotype 3', 'K3 Cells', 'Karyotype 4', 'K4 Cells', 
+  # 'Karyotype 5', 'K5 Cells', 'Karyotype 6', 'K6 Cells', 'FISH Diagnosis', 'FISH Report', 'FISH ISCN Formula 1', 
+  # 'FISH ISCN Formula 2', 'FISH ISCN Formula 3', 'FISH ISCN Formula 4', 'M Diagnosis', 'M Report', 'M Report EN', 
+  # 'I Diagnosis', 'I Report', 'I Report EN', 'Clinical Diagnosis', 'Date of Diagnosis', 'Overall survival (days)', 
+  # 'Prognostic Score Name', 'Prognostic Score Value', 'Date Last FU', 'Date of Death', 'Cause of Death', 'Cause of Death EN', 
+  #'Familial Disease', 'Histology', 'Histology EN', 'Date of Relapse', 'Date of Remission', 
+  # 'ASXL1', 'ASXL2', 'ATRX', 'BCOR', 'BCORL1', 'BRAF', 'CALR', 'CBL', 'CEBPA', 'CSF3R', 'CSNK1A1', 'CUX1', 'DDX41', 
+  # 'DNMT3A', 'ETNK1', 'ETV6', 'EZH2', 'FBXW7', 'FLT3', 'GATA1', 'GATA2', 'GNB1', 'IDH1', 'IDH2', 'IL6R', 'JAK2', 
+  # 'KIT', 'KRAS', 'MPL', 'MYD88', 'NF1', 'NOTCH1', 'NPM1', 'NRAS', 'PDGFRA', 'PDGFRB', 'PHF6', 'PIGA', 'PPM1D', 
+  #'PRPF8', 'PTEN', 'PTPN11', 'RAD21', 'RUNX1', 'SETBP1', 'SF1', 'SF3A1', 'SF3B1', 'SH2B3', 'SMC1A', 'SMC3', 'SRSF2', 
+  #'STAG2', 'SUZ12', 'TET2', 'TP53', 'U2AF1', 'U2AF2', 'UBA1', 'WT1', 'ZEB2', 'ZRSR2']
+  clin_vars: ["Histology EN", 'Gender 1=female;2=male', "Age", "Clinical Status EN", 'Final Diagnosis', '% Blasts in PB', 
+              'FISH Diagnosis', "WBC", "Clinical Diagnosis", 'Prognostic Score Value', 'Histology EN', 'Cause of Death EN',
+              "Overall survival (days)", 'Mat in Z EN', "TP53", "sample date", 'ASXL1', 'ASXL2', 'ATRX', 
               'BCOR', 'BCORL1', 'BRAF', 'CALR', 'CBL', 'CEBPA', 'CSF3R', 'CSNK1A1', 'CUX1', 
               'DDX41', 'DNMT3A', 'ETNK1', 'ETV6', 'EZH2', 'FBXW7', 'FLT3', 'GATA1', 'GATA2', 
               'GNB1', 'IDH1', 'IDH2', 'IL6R', 'JAK2', 'KIT', 'KRAS', 'MPL', 'MYD88', 'NF1', 
@@ -90,8 +108,7 @@ clin_viz:
 # similarity‑network‑fusion (SNF) script
 # ----------------------------------------------------------------
 snf:
-  k:        20      # k‑nearest neighbours
+  k:        20      # k‑nearest neighbors
   mu:       0.5     # bandwidth scale
   T:        20      # diffusion iterations
-  edge_thr_q: 0.9    # prune edges below this weight
   seed:     0      # RNG seed for layouts / reproducibility
