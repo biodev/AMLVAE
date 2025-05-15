@@ -220,7 +220,7 @@ rule threshold:
         model = rules.train.output.model,          # need trained VAE
         expr  = rules.preprocess.output.expr       # ensures pre‑proc done
     output:
-        dist = f"../runs/{run_id}/fold_{{fold}}/distance/{PROCCFG['dataset_name']}_dist.csv"
+        dist = f"../runs/{run_id}/fold_{{fold}}/distance/{PROCCFG['dataset_name']}_dist.csv",
         z = f"../runs/{run_id}/fold_{{fold}}/distance/{PROCCFG['dataset_name']}_z.csv"
     params:
         script   = config["scripts"]["distance"],
