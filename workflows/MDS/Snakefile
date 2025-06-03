@@ -145,7 +145,6 @@ rule train:
         norm      = TRAINCFG["norm"],
         variational        = TRAINCFG["variational"],
         anneal             = TRAINCFG["anneal"],
-        aggressive_updates = TRAINCFG["aggressive_updates"],
         dropout   = TRAINCFG["dropout"],
         nonlin    = TRAINCFG["nonlin"],
         lr        = TRAINCFG["lr"],
@@ -153,7 +152,7 @@ rule train:
         beta      = TRAINCFG["beta"],
         batch_size = TRAINCFG["batch_size"],
         dsname    = PROCCFG["dataset_name"],
-        tune_res  = TRAINCFG.get("aml_tune_results_path", None)
+        masked_prob = TRAINCFG.get("masked_prob", 0.0),
     conda:
         "../envs/amlvae.yaml"
     shell:
@@ -172,13 +171,13 @@ rule train:
             --norm {params.norm} \
             --variational {params.variational} \
             --anneal {params.anneal} \
-            --aggresive_updates {params.aggressive_updates} \
             --dropout {params.dropout} \
             --nonlin {params.nonlin} \
             --lr {params.lr} \
             --l2 {params.l2} \
             --beta {params.beta} \
-            --batch_size {params.batch_size}
+            --batch_size {params.batch_size} \
+            --masked_prob {params.masked_prob}
         """
 
 
