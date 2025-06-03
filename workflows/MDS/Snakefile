@@ -67,12 +67,14 @@ rule make_partitions:
         seed   = PARTCFG["seed"],
         n_val  = PARTCFG["n_val"],
         idcol  = PARTCFG["id_type_name"]
+        src_path = PARTCFG["source_path"]
     conda:
         "../envs/amlvae.yaml"
     shell:
         """
         python {params.script} \
             --fpath {params.fpath} \
+            --source_path {params.src_path} \
             --out {params.out} \
             --k {params.k} \
             --seed {params.seed} \

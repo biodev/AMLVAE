@@ -52,13 +52,14 @@ if __name__ == '__main__':
 
     print('loading data...')
     z = pd.read_csv(args.z_path, index_col=0) 
-    clin = pd.read_excel(args.clin_path, sheet_name=0)
+    #clin = pd.read_excel(args.clin_path, sheet_name=0)
+    clin = pd.read_csv(args.clin_path)
 
     print('running umap...')
     reducer = umap.UMAP(n_neighbors=args.n_neighbors, min_dist=args.min_dist, n_components=2, metric=args.metric)
     u = reducer.fit_transform(z.values) 
-    u = pd.DataFrame(u, index=z.index, columns=['u1','u2']).assign(**{'MLL ID': z.index}) 
-    u = u.merge(clin, on='MLL ID', how='left') 
+    u = pd.DataFrame(u, index=z.index, columns=['u1','u2']).assign(**{'gdc_id': z.index}) 
+    u = u.merge(clin, on='gdc_id', how='left') 
 
     for clin_var in args.clin_vars: 
         print('plotting UMAP for', clin_var)

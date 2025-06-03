@@ -36,7 +36,7 @@ def get_args():
                             help='path to output dir')
     argparser.add_argument('--epochs', type=int, default=1000,
                             help='number of epochs to train for')
-    argparser.add_argument('--patience', type=int, default=100,
+    argparser.add_argument('--patience', type=int, default=1000,
                             help='patience for early stopping')
     argparser.add_argument('--n_hidden', type=int, default=512,
                             help='number of hidden units')
@@ -50,8 +50,6 @@ def get_args():
                             help='variational method')
     argparser.add_argument('--anneal', type=str, default='true',
                             help='annealing method')
-    argparser.add_argument('--aggresive_updates', type=str, default='true',
-                            help='aggresive updates method')
     argparser.add_argument('--dropout', type=float, default=0.0,
                             help='dropout rate')
     argparser.add_argument('--nonlin', type=str, default='elu',
@@ -66,6 +64,8 @@ def get_args():
                             help='batch size')
     argparser.add_argument('--dataset_name', type=str, default='aml',
                             help='dataset name')
+    argparser.add_argument('--masked_prob', type=float, default=0.0,
+                            help='probability of masking an input feature')
     
     args = argparser.parse_args()
     
@@ -75,13 +75,6 @@ def get_args():
         args.anneal = False
     else:
         raise ValueError(f'Unknown value for anneal: {args.anneal}')
-    
-    if args.aggresive_updates in ['true', 'True', 'TRUE', '1']:
-        args.aggresive_updates = True
-    elif args.aggresive_updates in ['false', 'False', 'FALSE', '0']:
-        args.aggresive_updates = False
-    else:
-        raise ValueError(f'Unknown value for aggresive_updates: {args.aggresive_updates}')
     
     if args.variational in ['true', 'True', 'TRUE', '1']:
         args.variational = True
@@ -121,13 +114,13 @@ if __name__ == '__main__':
             'norm'       : args.norm,
             'variational': args.variational,
             'anneal'     : args.anneal,
-            'aggresive_updates': args.aggresive_updates,
             'dropout'    : args.dropout,
             'nonlin'     : args.nonlin,
             'lr'         : args.lr,
             'l2'         : args.l2,
             'beta'       : args.beta,
             'batch_size' : args.batch_size,
+            'masked_prob': args.masked_prob,
         }
 
     model = trainer(config)

@@ -28,7 +28,8 @@ rule all:
         f"{TUNE_OUT}/amlvae_tune_results.csv",
         f"{TRAIN_OUT}/model.pt",
         f"{EVAL_OUT}/eval.csv",
-        f"{EVAL_OUT}/embedding_umap_plot__tcga_cluster.png"
+        f"{EVAL_OUT}/clin_eval_complete.txt",
+        f"{EVAL_OUT}/clin_viz_complete.txt",
 
 # ----------------------------------------------------------------
 # Rule: preprocess expression data
@@ -113,15 +114,7 @@ rule evaluate:
         splits = rules.preprocess.output.splits
     output:
         csv   = f"{EVAL_OUT}/eval.csv",
-        plots = expand(
-            f"{EVAL_OUT}/embedding_umap_plot__{{label}}.png",
-            label=[
-                "tcga_cluster",
-                "fabBlastMorphology",
-                "consensusAMLFusions",
-                "overallSurvival",
-            ]
-        )
+        z_file = f"{EVAL_OUT}/{DATASET_NAME}_z.csv"
     conda:
         "../envs/amlvae.yaml"
     params:
@@ -131,5 +124,66 @@ rule evaluate:
         "envs/amlvae.yaml"
     shell:
         """
-        python {params.script} --data {DATA} --proc {PROC_OUT} --out  {EVAL_OUT} --model_path {input.model}
+        python {params.script} --data {DATA} --proc {PROC_OUT} --out {EVAL_OUT} --model_path {input.model}
+        """
+
+
+# ----------------------------------------------------------------
+# Rule: clinical evaluation & extra plots
+# ----------------------------------------------------------------
+rule clin_eval:
+    input:
+        model   = rules.train.output.model,
+        expr    = rules.preprocess.output.expr,
+        splits  = rules.preprocess.output.splits
+    output:
+        done = f"{EVAL_OUT}/clin_eval_complete.txt"
+    params:
+        script = config['scripts']['clin_eval']
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        python {params.script} \
+               --data {DATA} \
+               --proc {PROC_OUT} \
+               --out  {EVAL_OUT} \
+               --model_path {input.model}
+        touch {output.done}
+        """
+
+
+# ----------------------------------------------------------------
+# Rule: visualise embedding coloured by clinical features
+# ----------------------------------------------------------------
+rule clin_viz:
+    input:
+        z_file = lambda wc: config['clin_viz']['z_path'].format(
+                    EVAL_OUT=EVAL_OUT, dataset_name=DATASET_NAME),
+        clin   = config['clin_viz']['clin_path']
+    output:
+        done = f"{EVAL_OUT}/clin_viz_complete.txt"
+    params:
+        script      = config['scripts']['clin_viz'],
+        out_dir     = EVAL_OUT,
+        n_neighbors = config['clin_viz']['n_neighbors'],
+        min_dist    = config['clin_viz']['min_dist'],
+        metric      = config['clin_viz']['metric'],
+        clin_vars   = "<::>".join(config['clin_viz']['clin_vars']),
+        seed        = config['clin_viz']['seed']
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        python {params.script} \
+               --z_path    {input.z_file} \
+               --clin_path {input.clin} \
+               --out       {params.out_dir} \
+               --n_neighbors {params.n_neighbors} \
+               --min_dist    {params.min_dist} \
+               --metric      {params.metric} \
+               --clin_vars   '{params.clin_vars}' \
+               --seed        {params.seed}
+        # clin_viz.py already writes its own sentinel – just rename/move it
+        #mv {params.out_dir}/clin_viz_complete.txt {output.done}
         """

@@ -88,28 +88,37 @@ class Trainer():
         self.patience = patience
         self.return_best_model = return_best_model
 
-    def train_epoch(self, model, optim, batch_size, device, beta, aggresive_updates): 
+    def permute(self, x): 
+        '''permute the rows of a tensor (B, N) independently'''
+        idx = torch.argsort(torch.rand(*x.shape, dim=1)) 
+        xp = torch.gather(x, 1, idx) 
+        return xp
+    
+    def mask(self, x, prob=0.0):
+        '''bernoulli mask the rows of a tensor (B, N) independently
+        prob=0 -> no masking (return x)''' 
+        
+        if prob == 0.0:
+            return x
+        
+        xp = self.permute(x)
+        mask = torch.bernoulli(torch.ones(x.size(0), x.size(1)) * prob).to(x.device)
+        x_masked = x * (1 - mask) + xp * mask
+        return x_masked, mask
+
+    def train_epoch(self, model, optim, batch_size, device, beta, masked_prob=0.0): 
+        
         model.train()
         for ixs in torch.split(torch.randperm(len(self.X_train)), batch_size):
 
-            if aggresive_updates:
-                freeze_(model.decoder)
-                converged = False; losses = [] 
-                while not converged:
-                    ixs = torch.randperm(len(self.X_train))
-                    x = self.X_train[ixs].to(device)
-                    out = model(x)
-                    loss, mse, kld = model.loss(x, beta=beta, **out)
-                    loss.backward()
-                    losses.append(loss.item())
-                    optim.step()
-                    optim.zero_grad()
-                    converged = check_convergence(losses) 
-                unfreeze_(model.decoder)
             optim.zero_grad()
             x = self.X_train[ixs].to(device)
-            out = model(x)
-            loss, mse, kld = model.loss(x, beta=beta, **out)
+            
+            # VIME ; https://proceedings.neurips.cc/paper_files/paper/2020/file/7d97667a3e056acab9aaf653807b4a03-Paper.pdf 
+            x_in = self.mask(x.clone().detach(), masked_prob) # Masked autoencoder format  
+            out = model(x_in)
+            loss, mse, kld, lm = model.loss(x, beta=beta, **out)
+
             loss.backward()
             optim.step()
         
@@ -128,7 +137,8 @@ class Trainer():
         model.eval() 
         with torch.no_grad():
             out = model(X.to(device))
-            loss, mse, kld = model.loss(X.to(device), beta=0, **out)
+            # total_loss, recon_loss, kld, lm
+            loss, mse, kld, _ = model.loss(X.to(device), beta=0, **out)
             r2 = r2_score(X.cpu().numpy(), out['xhat'].cpu().numpy(), multioutput='variance_weighted')
         return mse.item(), r2, loss.item(), kld.item()
 
@@ -168,7 +178,7 @@ class Trainer():
                 beta = config['beta']
 
             self.train_epoch(
-                model, optim, config['batch_size'], device, beta, config['aggresive_updates']
+                model, optim, config['batch_size'], device, beta
             )
             mse, r2, elbo, kld = self.eval(
                 model, device, partition='val'

@@ -1,20 +1,22 @@
 # Unique tag for this run – use anything you like
-run_id: "aml_tpm_variance_zscore_1000_latent12"
+run_id: "aml_tpm_variance_zscore_2500_latent32"
 
 # Global
 data_dir: "../../../data"
-n_latent: 12
+n_latent: 32
 
 scripts:
   proc: "../scripts/proc.py"            
   train: "../scripts/train.py"
   tune: "../scripts/tune.py"
   eval: "../scripts/eval.py"
+  clin_viz: "../scripts/clin_viz.py"
+  clin_eval: "../scripts/clin_eval.py"
 
 proc:                      # ---------- proc.py arguments ----------
-  target_type: "tpm_unstranded"       # fpkm
-  gene_selection_method: "variance"   # 'variance', 'tcga'
-  num_top_genes: 1000 
+  target_type: "fpkm_unstranded"       # fpkm
+  gene_selection_method: "wgcna"   # 'variance', 'tcga', 'wgcna'
+  num_top_genes: 2000 
   norm_method: "zscore"               # 'zscore', minmax 
   dataset_name: "aml"               
   gene_id_type: "gene_name"          # 'gene_name', 'gene_id' 
@@ -22,12 +24,21 @@ proc:                      # ---------- proc.py arguments ----------
 
 tune:                      # ---------- tune.py arguments ----------
   target_metric: "r2"        # elbo | mse | r2
-  num_samples: 5
-  patience: 100
+  num_samples: 100
+  patience: 1500
   gpus: 1
   cpus: 10
-  epochs: 1000
+  epochs: 1500
 
 train:                     # ---------- train.py arguments ----------
-  epochs: 1000
-  patience: 100
+  epochs: 1500
+  patience: 1500
+
+clin_viz:
+  z_path: "{EVAL_OUT}/{dataset_name}_z.csv"
+  clin_path: "../../../data/beataml_clinical_for_inputs.csv"
+  clin_vars: ["overallSurvival", "consensusAMLFusions", "fabBlastMorphology"]
+  n_neighbors: 15
+  min_dist:   0.1
+  metric:     "euclidean"
+  seed:       42

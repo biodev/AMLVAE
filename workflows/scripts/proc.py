@@ -50,8 +50,14 @@ if __name__ == '__main__':
     expr_long2 = pd.read_csv(f'{args.data}/{args.dataset_name}_validation.csv')
     expr_long3 = pd.read_csv(f'{args.data}/{args.dataset_name}_test.csv')
 
+    if args.dataset_name == 'aml':
+        counts_name = 'unstranded'
+    elif args.dataset_name == 'mds':
+        counts_name = 'counts'
+
     eproc = ExprProcessor(expr_long1, 
                           target        = args.target_type,             # options: 'FPKM' (mds); aml-> 'unstranded','stranded_first','stranded_second','tpm_unstranded','fpkm_unstranded','fpkm_uq_unstranded'
+                          counts_name   = counts_name,                  # options: 'unstranded' (aml), 'counts' (mds)
                           gene_col      = args.gene_id_type,            # options: 'gene_id' (mds),'gene_name' (aml)
                           sample_id_col = args.sample_id_type)          # options: 'array_id' (mds), 'id' (aml)
     

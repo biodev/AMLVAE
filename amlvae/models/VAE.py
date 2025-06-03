@@ -59,6 +59,14 @@ class VAE(nn.Module):
                            nonlin           = nonlin, 
                            bias             = True)
         
+        self.mask_classifier = MLP(in_channels      = latent_dim, 
+                                      hidden_channels  = hidden_dim, 
+                                      out_channels     = input_dim,
+                                      layers           = n_layers,
+                                      dropout          = dropout, 
+                                      nonlin           = nonlin, 
+                                      bias             = True)
+        
     def encode(self, x):
         h = self.encoder(x)
         mu, logvar = h.chunk(2, dim=-1) 
@@ -88,22 +96,25 @@ class VAE(nn.Module):
 
     def forward(self, x):
         mu, logvar = self.encode(x.view(-1, x.size(1)))
-        z = self.reparameterize(mu, logvar)
-
+        
         if self.variational: 
-            out = self.decode(z)
+            z = self.reparameterize(mu, logvar)
         else: 
-            out = self.decode(mu)
+            z = mu
+
+        out = self.decode(z)
 
         if hasattr(self, 'adv_dict'):
             adv_preds = self.adversarial(mu)
         else: 
             adv_preds = {} 
 
-        return {**{'xhat': out, 'mu': mu, 'logvar': logvar}, **adv_preds}
+        mask_hat = self.mask_classifier(z).sigmoid() 
+
+        return {**{'xhat': out, 'mu': mu, 'logvar': logvar, 'mask_hat':mask_hat}, **adv_preds}
 
     @staticmethod
-    def loss(x, xhat, mu, logvar, beta=1., **kwargs):
+    def loss(x, xhat, mu, logvar, beta=1., mask=None, **kwargs):
         """
         Computes the VAE loss = recon_loss + KL_divergence.
         """
@@ -116,9 +127,15 @@ class VAE(nn.Module):
         P = torch.distributions.Independent(torch.distributions.Normal(mu, std), 1) # posterior
         Q = torch.distributions.Independent(torch.distributions.Normal(torch.zeros_like(mu), torch.ones_like(std)), 1) # prior
         kld = torch.distributions.kl.kl_divergence(P, Q).sum() / x.size(0)
-                                                                                      
-        total_loss = recon_loss + beta*kld 
-        return total_loss, recon_loss, kld #, recon_loss, kld
+
+        # VIME loss 
+        if mask is not None: 
+            lm = F.binary_cross_entropy(mask, kwargs['mask_hat'], reduction='mean') 
+        else: 
+            lm = 0.0
+
+        total_loss = recon_loss + beta*kld + lm 
+        return total_loss, recon_loss, kld, lm #, recon_loss, kld
 
     def eval_(self, x, xhat):
 

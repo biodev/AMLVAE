@@ -101,7 +101,10 @@ def load(args):
         data.loc[partitions['test_ids'], :].values, dtype=torch.float32
     )
 
-    return X_train, X_val, X_test
+    train_ids = partitions['train_ids']
+    val_ids = partitions['val_ids']
+    test_ids = partitions['test_ids']
+    return X_train, X_val, X_test, train_ids, val_ids, test_ids
 
 
 if __name__ == '__main__': 
@@ -116,7 +119,7 @@ if __name__ == '__main__':
     print(args)
     print('---------------------------------------------')
     
-    X_train, X_val, X_test = load(args) 
+    X_train, X_val, X_test, train_ids, val_ids, test_ids = load(args) 
     model = torch.load(args.model_path, weights_only=False, map_location='cuda')
     model = model.eval()
 
@@ -125,6 +128,18 @@ if __name__ == '__main__':
     eval_res = pd.concat([vae_res, pca_res], axis=0) 
     eval_res = eval_res.assign(path=args.model_path)
     eval_res.to_csv(f'{args.out}/eval.csv', index=False)
+
+    # save the model's latent space
+    with torch.no_grad():
+        z_train = model.encode(X_train.to('cuda'))[0].cpu()
+        z_val = model.encode(X_val.to('cuda'))[0].cpu()
+        z_test = model.encode(X_test.to('cuda'))[0].cpu()
+    z = pd.DataFrame(
+        np.concatenate([z_train, z_val, z_test], axis=0),
+        index=np.concatenate([train_ids, val_ids, test_ids], axis=0),
+        columns=[f'z{i+1}' for i in range(model.latent_dim)]
+    )
+    z.to_csv(f'{args.out}/{args.dataset}_z.csv')
 
     print() 
     print('---------------------------------------------')

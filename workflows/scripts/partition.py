@@ -18,6 +18,8 @@ def get_args():
     argparser = argparse.ArgumentParser(description=__doc__)
     argparser.add_argument('--fpath', type=str, default='../../data/mds_dummy.csv', 
                            help='path to data file')
+    argparser.add_argument('--source_path', type=str, default='../../data/mds_source.xlsx',
+                            help='path to source file with sample metadata')
     argparser.add_argument('--out', type=str, default='../output/mds_partitions/',
                             help='path to output dir')
     argparser.add_argument('--k', type=int, default=5,
@@ -51,7 +53,17 @@ if __name__ == '__main__':
     expr = pd.read_csv(args.fpath, sep='\t')
 
     ids = expr[args.id_type_name].unique()
-    print(f'Number of unique {args.id_type_name}: {len(ids)}')
+    print(f'Number of unique {args.id_type_name} [BM + PB]: {len(ids)}')
+
+    # -----------------------------------------------------------------------------------------------------------------------
+    # 6/3/25 - remove periphereal blood samples (bone marrow samples only) as their are not many PB samples in the dataset. 
+    mds_source = pd.read_excel(args.source_path, sheet_name=0)
+    print(mds_source.head())
+    BM_ids = mds_source[lambda x: x.material == 'BM'][args.id_type_name].unique()
+    ids = set(ids).intersection(set(BM_ids)) 
+    print(f'Number of unique {args.id_type_name} [BM only]: {len(ids)}')
+    # -----------------------------------------------------------------------------------------------------------------------
+
 
     os.makedirs(args.out, exist_ok=True)
 

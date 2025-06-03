@@ -1,9 +1,9 @@
 # Unique tag for this run – use anything you like
-run_id: "mds_fpkm_variance_zscore_1000_latent12"
+run_id: "mds_fpkm_variance_zscore_2000_latent32"
 
 # Global
 data_dir: "../../../data"
-n_latent: 64
+n_latent: 32
 
 scripts:
   proc: "../scripts/proc.py"            
@@ -18,7 +18,8 @@ scripts:
 # Cross‑validation partitioning
 # ----------------------------------------------------------------
 partition:
-  fpath:     '/home/groups/NGSdev/projects/evansmds/mds_data/20241219_WTS_Data_Proj805.csv' #"../../../data/mds_dummy.csv" 
+  fpath:        "/home/groups/NGSdev/projects/evansmds/mds_data/20241219_WTS_Data_Proj805.csv" 
+  source_path:  "/home/groups/NGSdev/projects/evansmds/mds_data/805_WTS_source_material.xlsx"
   out_dir:      "../folds"            # will create fold_0/, fold_1/, …
   id_type_name: "array_id"
   k:            10
@@ -31,8 +32,8 @@ partition:
 # ----------------------------------------------------------------
 proc:
   target_type: "FPKM"       # fpkm
-  gene_selection_method: "variance"   # 'variance', 'tcga'
-  num_top_genes: 1000 
+  gene_selection_method: "wgcna"   # 'variance', 'tcga'
+  num_top_genes: 2000 
   norm_method: "zscore"               # 'zscore', minmax 
   dataset_name: "mds"               
   gene_id_type: "gene_id"          # 'gene_name', 'gene_id' 
@@ -43,20 +44,20 @@ proc:
 # processing script
 # ----------------------------------------------------------------
 train:
-  epochs:         1000
-  patience:       100
+  epochs:         1500
+  patience:       1500
   n_hidden:       2048
-  n_layers:       1
-  norm:           "layer"     # "batch", "none", …
+  n_layers:       2
+  norm:           "batch"     # "batch", "none", "layer" …
   variational:    True
   anneal:         False
-  aggressive_updates: False
-  dropout:        0.25
+  dropout:        0.42
   nonlin:         "elu"
-  lr:             1e-4
+  lr:             1.259e-4
   l2:             0.0
   beta:           1.0
-  batch_size:     256
+  batch_size:     128
+  masked_prob:    0.063
 
 
 # ----------------------------------------------------------------

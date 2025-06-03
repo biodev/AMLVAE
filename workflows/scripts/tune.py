@@ -17,18 +17,18 @@ import argparse
 ####################################################################################
 ####################################################################################
 __SEARCH_SPACE__ = {
-        "lr"                : hp.choice('lr', [5e-5, 1e-4, 5e-4]),
+        "lr"                : hp.loguniform('lr', -12, -4),
         "l2"                : hp.choice('l2', [0, 1e-6, 1e-2]),
         "n_hidden"          : hp.choice('n_hidden', [256, 512, 1024, 2048]),
-        "n_layers"          : hp.choice('n_layers', [1, 2, 4]),
-        "batch_size"        : hp.choice('batch_size', [128, 256]),
-        "aggresive_updates" : hp.choice('aggresive_updates', [False]),
+        "n_layers"          : hp.choice('n_layers', [1, 2, 3, 4]),
+        "batch_size"        : hp.choice('batch_size', [64, 128, 256]),
         "norm"              : hp.choice('norm', ["batch", "layer", "none"]),
         "variational"       : hp.choice('variational', [True]),
         "anneal"            : hp.choice('anneal', [True, False]),
-        "dropout"           : hp.choice('dropout', [0.0, 0.1, 0.2, 0.3]),
+        "dropout"           : hp.uniform('dropout', 0, 0.5),
         "nonlin"            : hp.choice('nonlin', ["elu", "gelu"]),
         "beta"              : hp.choice('beta', [1]),
+        "masked_prob"       : hp.uniform('masked_prob', 0., 0.5),
     }
 ####################################################################################
 ####################################################################################
@@ -47,7 +47,7 @@ def get_args():
                             help='target metric for tuning')
     argparser.add_argument('--num_samples', type=int, default=100,
                             help='number of samples for tuning')
-    argparser.add_argument('--patience', type=int, default=100,
+    argparser.add_argument('--patience', type=int, default=1000,
                             help='patience for early stopping')
     argparser.add_argument('--gpus', type=int, default=1,
                             help='number of gpus to use')
@@ -107,7 +107,9 @@ if __name__ == '__main__':
     results = tuner.fit()   
 
     dfs = {result.path: result.metrics_dataframe for result in results}
-    res = {'val_mse': [], 'val_r2':[], 'val_elbo':[], 'batch_size': [], 'beta': [], 'dropout': [], 'l2': [], 'lr': [], 'n_hidden': [], 'n_latent': [], 'n_layers': [], 'nonlin': [], 'norm': [], 'variational': [], 'n_epochs': [], 'path':[], 'aggresive_updates': [], 'anneal': []}
+    res = {'val_mse': [], 'val_r2':[], 'val_elbo':[], 'batch_size': [], 'beta': [], 'dropout': [], 'l2': [], 'lr': [], 
+           'n_hidden': [], 'n_latent': [], 'n_layers': [], 'nonlin': [], 'norm': [], 'variational': [], 'n_epochs': [], 
+           'path':[], 'anneal': [], 'masked_prob': []}
     for name, df in dfs.items():
         best_trial = df.loc[df.val_mse.idxmin()]
         res['val_mse'].append(best_trial.val_mse)
@@ -125,9 +127,9 @@ if __name__ == '__main__':
         res['norm'].append(best_trial['config/norm'])
         res['variational'].append(best_trial['config/variational'])
         res['n_epochs'].append(best_trial['training_iteration'])
-        res['aggresive_updates'].append(best_trial['config/aggresive_updates'])
         res['anneal'].append(best_trial['config/anneal'])
         res['path'].append(name)
+        res['masked_prob'].append(best_trial['config/masked_prob'])
 
     res = pd.DataFrame(res).sort_values(by=metric, ascending=True).reset_index(drop=True)
 

@@ -21,6 +21,84 @@ def pivot_expression(
         .pivot(index=sample_id_col, columns=gene_col, values=value_col)
     )
     return df
+def select_genes_wgcna_protocol(
+    expr: pd.DataFrame,
+    counts: pd.DataFrame,
+    *,
+    top_n: int = 1000,
+    min_count: int = 10,
+    min_total_count: int = 15,
+    min_prop: float = 0.66,
+) -> Sequence[str]:
+    """
+    Reproduce the edgeR + WGCNA gene‑filtering workflow used in the original R
+    script.
+
+    1. **edgeR‐style low‑count filter** (via CPM)  
+       edgeR sets a CPM threshold  
+           k = min_count * 1e6 / min(lib.size)  
+       and keeps genes with CPM ≥ k in ≥ ceil(min_prop · n_samples) libraries,
+       *plus* a raw‑count total ≥ min_total_count.
+
+    2. **log₂(FPKM + 1)** transform on the remaining genes.
+
+    3. **Remove flat genes** (median‑absolute‑deviation == 0).
+
+    4. **Variance ranking** – keep the `top_n` most‑variable genes.
+
+    Parameters
+    ----------
+    expr   : pd.DataFrame
+        Samples × genes matrix of expression values (FPKM/TPM).
+    counts : pd.DataFrame
+        Samples × genes matrix of raw read counts (same orientation as `expr`).
+    top_n  : int
+        How many genes to retain after variance ranking.
+
+    Returns
+    -------
+    list[str]
+        Gene names ordered by decreasing variance.
+    """
+    # ------------------------------------------------------------------
+    # 1) edgeR‑style CPM filter
+    # ------------------------------------------------------------------
+    lib_sizes = counts.sum(axis=1)                      # total reads per sample
+    min_lib   = lib_sizes.min()
+    cpm       = counts.div(lib_sizes, axis=0) * 1e6     # counts‑per‑million
+
+    k = min_count * 1e6 / min_lib                       # CPM threshold
+    n_samples = counts.shape[0]
+    keep = (cpm >= k).sum(axis=0) >= np.ceil(min_prop * n_samples)
+    keep &= counts.sum(axis=0) >= min_total_count       # total‑count filter
+
+    if not keep.any():
+        raise RuntimeError("No genes passed the edgeR low‑count filter.")
+    expr_filt = expr.loc[:, keep[keep].index]
+
+    # ------------------------------------------------------------------
+    # 2) log₂(FPKM + 1)
+    # ------------------------------------------------------------------
+    log_expr = np.log2(expr_filt + 1.0)
+
+    # ------------------------------------------------------------------
+    # 3) drop genes with MAD == 0
+    # ------------------------------------------------------------------
+    med = np.median(log_expr.values, axis=0)
+    mad_vals = np.median(np.abs(log_expr.values - med), axis=0)
+    nz_mask = mad_vals > 0
+    if not nz_mask.any():
+        raise RuntimeError("All genes have MAD == 0 after log transform.")
+    log_expr = log_expr.loc[:, log_expr.columns[nz_mask]]
+
+    # ------------------------------------------------------------------
+    # 4) rank by variance and take top‑n
+    # ------------------------------------------------------------------
+    gene_var = log_expr.var(axis=0)
+    top_genes = gene_var.sort_values(ascending=False).index[:top_n]
+
+    return list(top_genes)
+
 
 
 def select_genes_tcga(
@@ -60,6 +138,8 @@ def select_genes_by_variance(
     """
     Pick the top_n most variable genes (by raw variance).
     """
+    # TODO: filter median absolute deviation of zero 
+
     var = expr.var(axis=0)
     return list(var.sort_values(ascending=False).index[:top_n])
 
@@ -117,6 +197,7 @@ class ExprProcessor:
         self,
         expr_long: pd.DataFrame,
         target: str = 'fpkm_uq_unstranded', 
+        counts_name: str = 'unstranded',
         gene_col: str = 'gene_name',
         sample_id_col: str = 'id',):
         
@@ -125,6 +206,12 @@ class ExprProcessor:
                                          value_col      = target, 
                                          gene_col       = gene_col, 
                                          sample_id_col  = sample_id_col)
+        
+        self._raw_counts = pivot_expression(expr_long,
+                                         value_col      = counts_name, 
+                                         gene_col       = gene_col, 
+                                         sample_id_col  = sample_id_col)
+        
         self.sample_ids = list(self.raw_expr.index)
         self.target = target
         self.gene_col = gene_col
@@ -139,6 +226,8 @@ class ExprProcessor:
             genes = select_genes_by_variance(self.raw_expr, top_n=top_n)
         elif method == 'tcga':
             genes = select_genes_tcga(self.raw_expr, top_n=top_n)
+        elif method == 'wgcna': 
+            genes = select_genes_wgcna_protocol(self.raw_expr, self._raw_counts, top_n=top_n)
         else:
             raise ValueError(f"Unknown method '{method}'")
 

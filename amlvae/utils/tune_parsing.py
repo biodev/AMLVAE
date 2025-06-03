@@ -30,13 +30,13 @@ _TRAIN_ARGS: List[str] = [
     "norm",
     "variational",
     "anneal",
-    "aggresive_updates",
     "dropout",
     "nonlin",
     "lr",
     "l2",
     "beta",
     "batch_size",
+    "masked_prob"
 ]
 
 # Metrics where **higher is better**; everything else is minimised
