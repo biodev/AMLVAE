@@ -52,19 +52,21 @@ if __name__ == '__main__':
     # load data
     expr = pd.read_csv(args.fpath, sep='\t')
 
-    ids = expr[args.id_type_name].unique()
+    ids = expr[args.id_type_name].unique().tolist()
     print(f'Number of unique {args.id_type_name} [BM + PB]: {len(ids)}')
 
     # -----------------------------------------------------------------------------------------------------------------------
     # 6/3/25 - remove periphereal blood samples (bone marrow samples only) as their are not many PB samples in the dataset. 
     mds_source = pd.read_excel(args.source_path, sheet_name=0)
-    BM_ids = mds_source[lambda x: x.material == 'BM']['exam_array'].unique()
+    BM_ids = mds_source[lambda x: x.material == 'BM']['exam_array'].unique().tolist()
     ids = list( set(ids).intersection(set(BM_ids))  )
     print(f'Number of unique {args.id_type_name} [BM only]: {len(ids)}')
     # -----------------------------------------------------------------------------------------------------------------------
 
+    print()
+    print(ids)
+    print() 
     
-
     os.makedirs(args.out, exist_ok=True)
 
     for i, (train_ids, test_ids) in enumerate(sklearn.model_selection.KFold(n_splits=args.k, shuffle=True, random_state=args.seed).split(ids)): 
