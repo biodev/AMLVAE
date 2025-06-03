@@ -62,6 +62,10 @@ if __name__ == '__main__':
         id_name = 'gdc_id'
     else:
         raise ValueError('Unsupported clinical data format. Use .xlsx or .csv.')
+    
+    print() 
+    print(clin.head())
+    print() 
 
     print('running umap...')
     reducer = umap.UMAP(n_neighbors=args.n_neighbors, min_dist=args.min_dist, n_components=2, metric=args.metric)
