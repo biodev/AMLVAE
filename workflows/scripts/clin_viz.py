@@ -51,15 +51,23 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     print('loading data...')
+    
     z = pd.read_csv(args.z_path, index_col=0) 
-    #clin = pd.read_excel(args.clin_path, sheet_name=0)
-    clin = pd.read_csv(args.clin_path)
+    
+    if args.clin_path.endswith('.xlsx'):
+        clin = pd.read_excel(args.clin_path, sheet_name=0)
+        id_name = 'array_id'
+    elif args.clin_path.endswith('.csv'): 
+        clin = pd.read_csv(args.clin_path)
+        id_name = 'gdc_id'
+    else:
+        raise ValueError('Unsupported clinical data format. Use .xlsx or .csv.')
 
     print('running umap...')
     reducer = umap.UMAP(n_neighbors=args.n_neighbors, min_dist=args.min_dist, n_components=2, metric=args.metric)
     u = reducer.fit_transform(z.values) 
-    u = pd.DataFrame(u, index=z.index, columns=['u1','u2']).assign(**{'gdc_id': z.index}) 
-    u = u.merge(clin, on='gdc_id', how='left') 
+    u = pd.DataFrame(u, index=z.index, columns=['u1','u2']).assign(**{id_name: z.index}) 
+    u = u.merge(clin, on=id_name, how='left') 
 
     for clin_var in args.clin_vars: 
         print('plotting UMAP for', clin_var)
