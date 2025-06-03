@@ -59,10 +59,11 @@ if __name__ == '__main__':
     # 6/3/25 - remove periphereal blood samples (bone marrow samples only) as their are not many PB samples in the dataset. 
     mds_source = pd.read_excel(args.source_path, sheet_name=0)
     BM_ids = mds_source[lambda x: x.material == 'BM']['exam_array'].unique()
-    ids = set(ids).intersection(set(BM_ids)) 
+    ids = list( set(ids).intersection(set(BM_ids))  )
     print(f'Number of unique {args.id_type_name} [BM only]: {len(ids)}')
     # -----------------------------------------------------------------------------------------------------------------------
 
+    
 
     os.makedirs(args.out, exist_ok=True)
 
