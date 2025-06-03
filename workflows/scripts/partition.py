@@ -63,17 +63,14 @@ if __name__ == '__main__':
     print(f'Number of unique {args.id_type_name} [BM only]: {len(ids)}')
     # -----------------------------------------------------------------------------------------------------------------------
 
-    print()
-    print(ids)
-    print() 
+    # convert to array for indexing 
+    ids = np.array(ids)
 
     os.makedirs(args.out, exist_ok=True)
 
     for i, (train_ids, test_ids) in enumerate(sklearn.model_selection.KFold(n_splits=args.k, shuffle=True, random_state=args.seed).split(ids)): 
         print(f'Generating partition fold {i+1}/{args.k}', end='\r')
 
-        print(train_ids[0:5])
-        
         fold_out_dir = f'{args.out}/fold_{i}/'
         os.makedirs(fold_out_dir, exist_ok=True) 
         
@@ -82,9 +79,9 @@ if __name__ == '__main__':
         val_ids = np.random.choice(train_ids, n_val, replace=False)
         train_ids = np.setdiff1d(train_ids, val_ids)
 
-        #train_ids = ids[train_ids]
-        #test_ids = ids[test_ids]
-        #val_ids = ids[val_ids]
+        train_ids = ids[train_ids]
+        test_ids = ids[test_ids]
+        val_ids = ids[val_ids]
 
         expr_train = expr[expr[args.id_type_name].isin(train_ids)]
         expr_val = expr[expr[args.id_type_name].isin(val_ids)]
