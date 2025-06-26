@@ -184,6 +184,4 @@ rule clin_viz:
                --metric      {params.metric} \
                --clin_vars   '{params.clin_vars}' \
                --seed        {params.seed}
-        # clin_viz.py already writes its own sentinel – just rename/move it
-        #mv {params.out_dir}/clin_viz_complete.txt {output.done}
         """

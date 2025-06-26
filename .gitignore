@@ -2,6 +2,7 @@
 /workflows/runs/
 /workflows/folds/
 *.snakemake
+/drugresp/data/
 
 
 # Byte-compiled / optimized / DLL files
