@@ -47,6 +47,7 @@ class VAE(nn.Module):
                            hidden_channels  = hidden_dim, 
                            out_channels     = latent_dim*2,
                            layers           = n_layers,
+                           norm             = norm,
                            dropout          = 0, 
                            nonlin           = nonlin, 
                            bias             = True)
@@ -55,6 +56,7 @@ class VAE(nn.Module):
                            hidden_channels  = hidden_dim, 
                            out_channels     = input_dim,
                            layers           = n_layers,
+                           norm             = norm,
                            dropout          = dropout, 
                            nonlin           = nonlin, 
                            bias             = True)
