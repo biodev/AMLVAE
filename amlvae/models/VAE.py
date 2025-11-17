@@ -5,44 +5,24 @@ from amlvae.models.utils import get_nonlin, get_norm
 import numpy as np 
 from sklearn.metrics import r2_score
 from amlvae.models.MLP import MLP
+from scvi.distributions import NegativeBinomial
 
-class GradientReverseFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, alpha):
-        # Save alpha (scale factor) for backward
-        ctx.alpha = alpha
-        return input.view_as(input)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Reverse gradient by multiplying with -alpha
-        return grad_output.neg() * ctx.alpha, None
-
-class GradientReversalLayer(torch.nn.Module):
-    def __init__(self, alpha=1.0):
-        super().__init__()
-        self.alpha = alpha
-
-    def forward(self, x):
-        # We call our custom autograd Function
-        return GradientReverseFunction.apply(x, self.alpha)
     
 class VAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, n_layers, latent_dim, conditions={}, 
-                 norm='layer', nonlin='elu', variational=True,
-                 dropout=0.):
+    def __init__(self, input_dim, hidden_dim, n_layers, latent_dim, 
+                 norm='layer', nonlin='elu',
+                 dropout=0., norm_first=True):
         super().__init__()
 
-        self.variational = variational
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+
         self.latent_dim = latent_dim 
 
         nonlin = get_nonlin(nonlin)
-        norm_layer = get_norm(norm)
+        norm = get_norm(norm)
 
-        if len(conditions) > 0: 
-            mlp = lambda d: torch.nn.Sequential(nn.Linear(latent_dim, latent_dim*4), nonlin(), norm_layer(latent_dim*4), nn.Linear(latent_dim*4, d))
-            self.adv_dict = torch.nn.ModuleDict({key: mlp(cond_dim) for key, cond_dim in conditions.items()})
-        
         self.encoder = MLP(in_channels      = input_dim,
                            hidden_channels  = hidden_dim, 
                            out_channels     = latent_dim*2,
@@ -50,99 +30,99 @@ class VAE(nn.Module):
                            norm             = norm,
                            dropout          = 0, 
                            nonlin           = nonlin, 
-                           bias             = True)
+                           bias             = True,
+                           norm_first       = norm_first)
         
         self.decoder = MLP(in_channels      = latent_dim,
                            hidden_channels  = hidden_dim, 
-                           out_channels     = input_dim,
+                           out_channels     = input_dim*2, # mu, theta
                            layers           = n_layers,
                            norm             = norm,
                            dropout          = dropout, 
                            nonlin           = nonlin, 
-                           bias             = True)
-        
-        self.mask_classifier = MLP(in_channels      = latent_dim, 
-                                      hidden_channels  = hidden_dim, 
-                                      out_channels     = input_dim,
-                                      layers           = n_layers,
-                                      dropout          = dropout, 
-                                      nonlin           = nonlin, 
-                                      bias             = True)
+                           bias             = True,
+                           norm_first       = norm_first)
+    
         
     def encode(self, x):
+
         h = self.encoder(x)
         mu, logvar = h.chunk(2, dim=-1) 
         return mu, logvar
     
     def reparameterize(self, mu, logvar):
+        
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+        P = torch.distributions.Normal(mu, std)
+        return P.rsample(), P
     
     def decode(self, z):
         return self.decoder(z)
-    
-    @DeprecationWarning 
-    def adversarial(self, z):
 
-        # perform gradient reversal layer (backward gradients will be reversed)
-        z = self.GRL(z)
-        adv_preds = {key: self.adv_dict[key](z) for key in self.adv_dict.keys()}
-        return adv_preds
     
     def predict(self, x): 
         # for reconstrunction evaluation 
         mu, logvar = self.encode(x.view(-1, x.size(1)))
         out = self.decode(mu)
-        return out
+        n_mu, n_var_ = torch.chunk(out, 2, dim=-1) 
+
+        n_var = torch.nn.functional.softplus(n_var_) + 1e-2
+
+        P = torch.distributions.Normal(n_mu, n_var)
+        return P.mean
 
     def forward(self, x):
         mu, logvar = self.encode(x.view(-1, x.size(1)))
         
-        if self.variational: 
-            z = self.reparameterize(mu, logvar)
-        else: 
-            z = mu
+        z, P_z = self.reparameterize(mu, logvar)
 
-        out = self.decode(z)
+        out = self.decode(z) 
 
-        if hasattr(self, 'adv_dict'):
-            adv_preds = self.adversarial(mu)
-        else: 
-            adv_preds = {} 
+        n_mu, n_var_ = torch.chunk(out, 2, dim=-1) 
 
-        mask_hat = self.mask_classifier(z).sigmoid() 
+        n_var = torch.nn.functional.softplus(n_var_) + 1e-2
 
-        return {**{'xhat': out, 'mu': mu, 'logvar': logvar, 'mask_hat':mask_hat}, **adv_preds}
+        P = torch.distributions.Normal(n_mu, n_var)
+
+        return {'xhat': P.mean, 'mu': mu, 'logvar': logvar, 'P': P, 'nll': -P.log_prob(x).mean(), 'P_z': P_z}
 
     @staticmethod
-    def loss(x, xhat, mu, logvar, beta=1., mask=None, **kwargs):
+    def loss(P_z, nll, beta=1., **kwargs):
         """
         Computes the VAE loss = recon_loss + KL_divergence.
         """
-        # Reconstruction loss (MSE here; choose appropriate loss for gene expression)
-        recon_loss = F.mse_loss(xhat, x, reduction='sum') / x.size(0)
-
-        std = torch.exp(0.5 * logvar)
+        B = P_z.loc.size(0)
 
         # KL for gene latent
+        Q = torch.distributions.Normal(torch.zeros_like(P_z.loc), torch.ones_like(P_z.scale)) # prior
+        kld = torch.distributions.kl.kl_divergence(P_z, Q).sum() / B
+
+        total_loss = nll + beta*kld 
+        return total_loss, nll, kld
+
+    @staticmethod 
+    def eval_posterior_collapse(mu, logvar, t=0.1):
+        std = torch.exp(0.5 * logvar)
         P = torch.distributions.Independent(torch.distributions.Normal(mu, std), 1) # posterior
         Q = torch.distributions.Independent(torch.distributions.Normal(torch.zeros_like(mu), torch.ones_like(std)), 1) # prior
-        kld = torch.distributions.kl.kl_divergence(P, Q).sum() / x.size(0)
+        kld = torch.distributions.kl.kl_divergence(P, Q).sum(0) / mu.size(0)
+        return (kld > t).mean().item()
 
-        # VIME loss 
-        if mask is not None: 
-            lm = F.binary_cross_entropy(mask, kwargs['mask_hat'], reduction='mean') 
-        else: 
-            lm = 0.0
+    @staticmethod
+    def eval_(x, xhat, mu, logvar, nll, beta=1., **kwargs):
 
-        total_loss = recon_loss + beta*kld + lm 
-        return total_loss, recon_loss, kld, lm #, recon_loss, kld
+        B = mu.size(0)
 
-    def eval_(self, x, xhat):
+        # KL for gene latent
+        std = torch.exp(0.5 * logvar)
+        P = torch.distributions.Independent(torch.distributions.Normal(mu, std), 1) # posterior
+        Q = torch.distributions.Independent(torch.distributions.Normal(torch.zeros_like(mu), torch.ones_like(std)), 1) # prior
+        kld = torch.distributions.kl.kl_divergence(P, Q).sum() / B
 
         eval_dict = {'MSE': F.mse_loss(xhat, x.view(-1, x.size(1)), reduction='mean'),
-                     'r': np.mean([np.corrcoef(x[:, i].detach().cpu().numpy(), xhat[:,i].detach().cpu().numpy()) for i in range(xhat.size(1))]),
-                     'r2': r2_score(x.detach().cpu().numpy(), xhat.detach().cpu().numpy(), multioutput='uniform_average')}
+                     'r2': r2_score(x.detach().cpu().numpy(), xhat.detach().cpu().numpy(), multioutput='uniform_average'),
+                     'nll': nll.item(),
+                     'elbo': nll.item() + beta*kld.item(),
+                     'kld': kld.item()}
     
         return eval_dict

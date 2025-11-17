@@ -1,5 +1,5 @@
 # Unique tag for this run – use anything you like
-run_id: "aml_fpkm_wgcna_zscore_10000_latent32"
+run_id: "mds_fpkm_wgcna_zscore_10000_latent32"
 
 # Global
 data_dir: "../../../data"
@@ -19,17 +19,17 @@ scripts:
 # Cross‑validation partitioning
 # ----------------------------------------------------------------
 partition:
-  fpath:        "/home/teddy/local/data/evansmds/expr/aml_all.csv" 
+  fpath:        "/home/teddy/local/data/evansmds/20241219_WTS_Data_Proj805__commasep.csv" 
   out_dir:      "../folds"            # will create fold_0/, fold_1/, …
-  id_type_name: "id"
+  id_type_name: "array_id"
   k:            10
   seed:         0
   n_val:        15
-  target_name: "fpkm_unstranded"
-  counts_name: "unstranded"
-  gene_col: "gene_name"
-  id_col: "id"
-  dataset_name: "aml"
+  target_name: "FPKM"
+  counts_name: "counts"
+  gene_col: "gene_id"
+  id_col: "array_id"
+  dataset_name: "mds"
   gene_selection_method: "wgcna"
   num_top_genes: 10000
   norm_method: "zscore"
@@ -53,7 +53,7 @@ train:
   lr:             1.25e-4
   l2:             1e-6
   beta:           1e-3
-  batch_size:     300
+  batch_size:     700
 
 # ----------------------------------------------------------------
 # compute pairwise distances and embed all samples 
@@ -68,14 +68,22 @@ distance:
 clin_viz:
 
   z_path: "../runs/{run_id}/snf/{dataset}_z.csv" 
-  clin_path: "/home/teddy/local/data/evansmds/beataml_clinical_for_inputs.csv"
+  clin_path: "/home/teddy/local/data/evansmds/805_data_20250107.csv"
   n_neighbors: 15
   min_dist:    0.1
   metric:      "cosine"
-  clin_vars: ["consensus_sex", "reportedRace", "reportedEthnicity", "fabBlastMorphology", "specimenType", "isDenovo", 
-              "ageAtDiagnosis", "consensusAMLFusions", "%.Blasts.in.BM", "%.Blasts.in.PB", "vitalStatus", "overallSurvival", 
-              "diseaseStageAtSpecimenCollection", "specimenGroups", "dxAtSpecimenAcquisition", "isTransformed", "priorMDS", 
-              "FLT3-ITD", "allelic_ratio", "NPM1", "RUNX1", "ASXL1", "TP53", "ELN2017"]
+  clin_vars: ["Gender 1=female;2=male", "Age", "Final Diagnosis", "Status EN", 
+              "Clinical Status EN", "WBC", "HB", "Platelets", 
+              "% Blasts in PB", "% Blasts im BM", 
+              "% Neutrophils in PB", "Clinical Diagnosis", 
+              "Overall survival (days)", "Familial Disease", "ASXL1", "ASXL2", "ATRX", "BCOR", 
+              "BCORL1", "BRAF", "CALR", "CBL", "CEBPA", "CSF3R", "CSNK1A1", "CUX1", "DDX41", 
+              "DNMT3A", "ETNK1", "ETV6", "EZH2", "FBXW7", "FLT3", "GATA1", "GATA2", "GNB1", 
+              "IDH1", "IDH2", "IL6R", "JAK2", "KIT", "KRAS", "MPL", "MYD88", "NF1", "NOTCH1",
+              "NPM1", "NRAS", "PDGFRA", "PDGFRB", "PHF6", "PIGA", "PPM1D", "PRPF8", "PTEN", 
+              "PTPN11", "RAD21", "RUNX1", "SETBP1", "SF1", "SF3A1", "SF3B1", "SH2B3", "SMC1A", 
+              "SMC3", "SRSF2", "STAG2", "SUZ12", "TET2", "TP53", "U2AF1", "U2AF2", "UBA1", 
+              "WT1", "ZEB2", "ZRSR2"]
   seed: 0
 
 # ----------------------------------------------------------------
@@ -90,8 +98,10 @@ clustering:
 # consensus heatmap with clinical annotations
 # ----------------------------------------------------------------
 consensus_heatmap:
-  clin_path: "/home/teddy/local/data/evansmds/beataml_clinical_for_inputs.csv"
-  id_col: "gdc_id"           # sample ID column name in clinical data
+  clin_path: "/home/teddy/local/data/evansmds/805_data_20250107.csv"
+  id_col: "MLL_ID"           # sample ID column name in clinical data
   linkage_method: "average"  # hierarchical clustering method (average, complete, ward, single)
   figsize: "20,18"           # figure size as "width,height"
-  clin_vars: ["vitalStatus", "priorMDS", "consensusAMLFusions", "overallSurvival", "priorMDS"]
+  clin_vars: ["Clinical Diagnosis", "Overall survival (days)", "ASXL1","KRAS", "NRAS", 
+              "RUNX1", "SRSF2", "STAG2", "SUZ12", "TET2", "TP53", "U2AF1",  
+              "WT1", "ZRSR2"]

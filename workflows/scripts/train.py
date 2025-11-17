@@ -46,8 +46,8 @@ def get_args():
                             help='number of layers')
     argparser.add_argument('--norm', type=str, default='layer',
                             help='normalization method')
-    argparser.add_argument('--variational', type=str, default='true',
-                            help='variational method')
+    argparser.add_argument('--norm_first', type=str, default='false',
+                            help='normalize first')  
     argparser.add_argument('--anneal', type=str, default='true',
                             help='annealing method')
     argparser.add_argument('--dropout', type=float, default=0.0,
@@ -64,8 +64,6 @@ def get_args():
                             help='batch size')
     argparser.add_argument('--dataset_name', type=str, default='aml',
                             help='dataset name')
-    argparser.add_argument('--masked_prob', type=float, default=0.0,
-                            help='probability of masking an input feature')
     
     args = argparser.parse_args()
     
@@ -75,13 +73,13 @@ def get_args():
         args.anneal = False
     else:
         raise ValueError(f'Unknown value for anneal: {args.anneal}')
-    
-    if args.variational in ['true', 'True', 'TRUE', '1']:
-        args.variational = True
-    elif args.variational in ['false', 'False', 'FALSE', '0']:
-        args.variational = False
+
+    if args.norm_first in ['true', 'True', 'TRUE', '1']:
+        args.norm_first = True
+    elif args.norm_first in ['false', 'False', 'FALSE', '0']:
+        args.norm_first = False
     else:
-        raise ValueError(f'Unknown value for variational: {args.variational}')
+        raise ValueError(f'Unknown value for norm_first: {args.norm_first}')
                             
     return args
 
@@ -103,7 +101,7 @@ if __name__ == '__main__':
         epochs=args.epochs,
         verbose=True, 
         patience=args.patience,
-        return_best_model=True,
+        return_best_model=False, # return last model
         dataset_name=args.dataset_name,
         ) 
     
@@ -112,7 +110,7 @@ if __name__ == '__main__':
             'n_layers'   : args.n_layers,
             'n_latent'   : args.n_latent,
             'norm'       : args.norm,
-            'variational': args.variational,
+            'norm_first' : args.norm_first,
             'anneal'     : args.anneal,
             'dropout'    : args.dropout,
             'nonlin'     : args.nonlin,
@@ -120,7 +118,6 @@ if __name__ == '__main__':
             'l2'         : args.l2,
             'beta'       : args.beta,
             'batch_size' : args.batch_size,
-            'masked_prob': args.masked_prob,
         }
 
     model = trainer(config)

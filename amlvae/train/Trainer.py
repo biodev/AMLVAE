@@ -7,6 +7,7 @@ import math
 import pandas as pd 
 from amlvae.models.VAE import VAE
 import tempfile
+import time
 
 try: 
     # versioning issues 
@@ -88,36 +89,16 @@ class Trainer():
         self.patience = patience
         self.return_best_model = return_best_model
 
-    def permute(self, x): 
-        '''permute the rows of a tensor (B, N) independently'''
-        idx = torch.argsort(torch.rand(*x.shape, dim=1)) 
-        xp = torch.gather(x, 1, idx) 
-        return xp
-    
-    def mask(self, x, prob=0.0):
-        '''bernoulli mask the rows of a tensor (B, N) independently
-        prob=0 -> no masking (return x)''' 
-        
-        if prob == 0.0:
-            return x
-        
-        xp = self.permute(x)
-        mask = torch.bernoulli(torch.ones(x.size(0), x.size(1)) * prob).to(x.device)
-        x_masked = x * (1 - mask) + xp * mask
-        return x_masked, mask
 
-    def train_epoch(self, model, optim, batch_size, device, beta, masked_prob=0.0): 
+    def train_epoch(self, model, optim, batch_size, device, beta): 
         
         model.train()
         for ixs in torch.split(torch.randperm(len(self.X_train)), batch_size):
 
             optim.zero_grad()
-            x = self.X_train[ixs].to(device)
-            
-            # VIME ; https://proceedings.neurips.cc/paper_files/paper/2020/file/7d97667a3e056acab9aaf653807b4a03-Paper.pdf 
-            x_in = self.mask(x.clone().detach(), masked_prob) # Masked autoencoder format  
-            out = model(x_in)
-            loss, mse, kld, lm = model.loss(x, beta=beta, **out)
+            x = self.X_train[ixs]
+            out = model(x)
+            loss, nll, kld = model.loss(beta=beta, **out)
 
             loss.backward()
             optim.step()
@@ -138,11 +119,9 @@ class Trainer():
         with torch.no_grad():
             out = model(X.to(device))
             # total_loss, recon_loss, kld, lm
-            loss, mse, kld, _ = model.loss(X.to(device), beta=0, **out)
-            r2 = r2_score(X.cpu().numpy(), out['xhat'].cpu().numpy(), multioutput='variance_weighted')
-        return mse.item(), r2, loss.item(), kld.item()
+            metrics = model.eval_(X.to(device), out['xhat'], out['mu'], out['logvar'], out['nll'])
 
-
+        return metrics
 
     def __call__(self, config):
 
@@ -152,14 +131,18 @@ class Trainer():
             'n_layers'    : config['n_layers'],
             'latent_dim'  : config['n_latent'],
             'norm'        : config['norm'],
-            'variational' : config['variational'],
             'dropout'     : config['dropout'],
             'nonlin'      : config['nonlin'],
+            'norm_first'  : config['norm_first'],
         }
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         model = VAE(**model_kwargs).to(device)
-        optim = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['l2'])
+        optim = torch.optim.AdamW(model.parameters(), lr=config['lr'], weight_decay=config['l2'])
+
+        self.X_train = self.X_train.to(device)
+        self.X_val = self.X_val.to(device)
+        self.X_test = self.X_test.to(device)
 
         best_elbo = float('inf')
         patience_count = 0 
@@ -180,37 +163,26 @@ class Trainer():
             self.train_epoch(
                 model, optim, config['batch_size'], device, beta
             )
-            mse, r2, elbo, kld = self.eval(
+
+            val_metrics = self.eval(
                 model, device, partition='val'
             )
 
-            if elbo < best_elbo:
-                best_elbo = elbo
+            if val_metrics['elbo'] < best_elbo:
+                best_elbo = val_metrics['elbo']
                 best_model = {k:v.detach().cpu() for k,v in model.state_dict().items()}
                 patience_count = 0
-            else: 
-                patience_count += 1
 
-            if self.checkpoint:
-                with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
-                    checkpoint = None
-                    if (epoch + 1) % self.log_every == 0:
-                        torch.save(
-                            model.state_dict(),
-                            os.path.join(temp_checkpoint_dir, "model.pth")
-                        )
-                        checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
-                    tune.report({"val_mse": mse, "val_r2":r2, 'val_elbo':elbo, 'val_kld':kld}, checkpoint=checkpoint)
-
-            if self.verbose: print(f'epoch: {epoch}, val mse: {mse:.4f}, val r2: {r2:.2f}, kld: {kld:.2f}, beta: {beta:.2E}', end='\r')
+            if self.verbose: 
+                print(f'epoch: {epoch}, val mse: {val_metrics['MSE']:.4f}, val r2: {val_metrics['r2']:.2f}, kld: {val_metrics['kld']:.2f}, nll: {val_metrics['nll']:.2f}, elbo: {val_metrics['elbo']:.2f}, beta: {beta:.2E}', end='\r')
 
             if patience_count > self.patience:
-                break              
+                break             
 
-        model.load_state_dict(best_model)
 
         if self.return_best_model:
+            model.load_state_dict(best_model)
             return model
         else: 
-            return
+            return model
         

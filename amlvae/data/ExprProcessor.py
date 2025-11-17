@@ -21,6 +21,8 @@ def pivot_expression(
         .pivot(index=sample_id_col, columns=gene_col, values=value_col)
     )
     return df
+
+    
 def select_genes_wgcna_protocol(
     expr: pd.DataFrame,
     counts: pd.DataFrame,
@@ -228,6 +230,8 @@ class ExprProcessor:
             genes = select_genes_tcga(self.raw_expr, top_n=top_n)
         elif method == 'wgcna': 
             genes = select_genes_wgcna_protocol(self.raw_expr, self._raw_counts, top_n=top_n)
+        elif method == 'none': 
+            genes = self.raw_expr.columns.tolist()
         else:
             raise ValueError(f"Unknown method '{method}'")
 
@@ -241,6 +245,9 @@ class ExprProcessor:
             self.expr, self.transform_params = normalize_zscore(self.raw_expr)
         elif method == 'minmax':
             self.expr, self.transform_params = normalize_minmax(self.raw_expr)
+        elif method == 'none':
+            self.expr = self.raw_expr
+            self.transform_params = {'method': 'none'}
         else:
             raise ValueError(f"Unknown normalization method '{method}'")
 
@@ -277,6 +284,8 @@ class ExprProcessor:
             normed = (logged - mn) / (mx - mn + 1e-8)
             # clip to [0,1]
             normed = np.clip(normed, 0, 1)
+        elif self.transform_params['method'] == 'none':
+            normed = raw_expr
         else:
             raise ValueError(f"Unknown transform method '{self.transform_params['method']}'")
 

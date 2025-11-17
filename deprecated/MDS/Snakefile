@@ -245,52 +245,6 @@ rule threshold:
 
 
 #################################################################
-# 6.  Similarity Network Fusion (runs once after all folds done)
-#################################################################
-SNFCFG = config["snf"]
-
-rule snf:
-    # distance matrices from every fold are inputs
-    input:
-        expand(
-            "../runs/{run_id}/fold_{fold}/distance/{dataset}_dist.csv",
-            run_id=run_id,
-            fold=FOLDS,
-            dataset=PROCCFG["dataset_name"],
-        )
-    output:
-        edge_index = f"../runs/{run_id}/snf/{PROCCFG['dataset_name']}_edge_index.npy",
-        edge_weight= f"../runs/{run_id}/snf/{PROCCFG['dataset_name']}_edge_weight.npy",
-        graph_png = f"../runs/{run_id}/snf/{PROCCFG['dataset_name']}_snf_graph.png"
-    params:
-        script    = config["scripts"]["snf"],
-        run_dir   = f"../runs/{run_id}",
-        out_dir   = f"../runs/{run_id}/snf",
-        dataset   = PROCCFG["dataset_name"],
-        num_folds = K,
-        k         = SNFCFG["k"],
-        mu        = SNFCFG["mu"],
-        T         = SNFCFG["T"],
-        edge_thr_q  = SNFCFG["edge_thr_q"],
-        seed      = SNFCFG["seed"]
-    conda:
-        "../envs/amlvae.yaml"
-    shell:
-        """
-        mkdir -p {params.out_dir}
-        python {params.script} \
-            --run_dir   {params.run_dir} \
-            --out       {params.out_dir} \
-            --dataset   {params.dataset} \
-            --num_folds {params.num_folds} \
-            --k         {params.k} \
-            --mu        {params.mu} \
-            --T         {params.T} \
-            --edge_thr_q  {params.edge_thr_q} \
-            --seed      {params.seed}
-        """
-
-#################################################################
 # 7.  UMAP coloured by clinical variables (per fold)
 #################################################################
 CLINCFG = config["clin_viz"]

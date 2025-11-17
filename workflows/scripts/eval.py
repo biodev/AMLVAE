@@ -83,8 +83,14 @@ def eval_pca(X_train, X_val, X_test, n_components):
 
     res = pd.DataFrame({'model':['pca'], 'r2_train':[r2_train], 'r2_val':[r2_val], 'r2_test':[r2_test],
            'mse_train':[mse_train], 'mse_val':[mse_val], 'mse_test':[mse_test]}) 
-    
-    return res 
+
+
+    pcs_all = np.concatenate([pca.transform(X_train.cpu().numpy()), 
+                              pca.transform(X_val.cpu().numpy()), 
+                              pca.transform(X_test.cpu().numpy())], axis=0)
+    pcs_all_df = pd.DataFrame(pcs_all, index=np.concatenate([train_ids, val_ids, test_ids], axis=0), columns=[f'PC{i+1}' for i in range(pcs_all.shape[1])])
+
+    return res, pcs_all_df
 
 def load(args): 
 
@@ -124,7 +130,8 @@ if __name__ == '__main__':
     model = model.eval()
 
     vae_res = eval_vae(model, X_train, X_val, X_test)
-    pca_res = eval_pca(X_train, X_val, X_test, n_components=model.latent_dim)
+    pca_res, pcs_all_df = eval_pca(X_train, X_val, X_test, n_components=model.latent_dim)
+
     eval_res = pd.concat([vae_res, pca_res], axis=0) 
     eval_res = eval_res.assign(path=args.model_path)
     eval_res.to_csv(f'{args.out}/eval.csv', index=False)
@@ -134,12 +141,15 @@ if __name__ == '__main__':
         z_train = model.encode(X_train.to('cuda'))[0].cpu()
         z_val = model.encode(X_val.to('cuda'))[0].cpu()
         z_test = model.encode(X_test.to('cuda'))[0].cpu()
-    z = pd.DataFrame(
+
+    z_df = pd.DataFrame(
         np.concatenate([z_train, z_val, z_test], axis=0),
         index=np.concatenate([train_ids, val_ids, test_ids], axis=0),
         columns=[f'z{i+1}' for i in range(model.latent_dim)]
     )
-    z.to_csv(f'{args.out}/{args.dataset}_z.csv')
+    
+    z_df.to_csv(f'{args.out}/{args.dataset}_vae_z.csv') 
+    pcs_all_df.to_csv(f'{args.out}/{args.dataset}_pca_z.csv')
 
     print() 
     print('---------------------------------------------')
