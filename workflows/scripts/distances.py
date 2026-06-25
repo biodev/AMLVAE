@@ -3,7 +3,6 @@ import os
 
 import pandas as pd
 import torch
-from sklearn.metrics import pairwise_distances
 
 from amlvae.data.clin_cond import load_clin_cond
 from amlvae.models.VAE import VAE
@@ -19,8 +18,6 @@ def get_args():
                            help='path to trained model.pt (state_dict + kwargs)')
     argparser.add_argument('--dataset', type=str, default='aml',
                            help='dataset prefix')
-    argparser.add_argument('--metric', type=str, default='euclidean',
-                           help='metric for pairwise distance calculation')
     return argparser.parse_args()
 
 
@@ -34,7 +31,7 @@ def load(args):
 if __name__ == '__main__':
     print()
     print('---------------------------------------------')
-    print('VAE: Computing pairwise distances')
+    print('VAE: Encoding latent embeddings')
     print('---------------------------------------------')
     print()
     print('arguments:')
@@ -59,8 +56,4 @@ if __name__ == '__main__':
     z_df = pd.DataFrame(z, index=ids, columns=[f'z{i+1}' for i in range(z.shape[1])])
     z_df.to_csv(f'{args.out}/{args.dataset}_z.csv', index=True, header=True)
 
-    print('Calculating pairwise distances')
-    dist = pairwise_distances(z, metric=args.metric)
-    dist = pd.DataFrame(dist, index=ids, columns=ids)
-
-    dist.to_csv(f'{args.out}/{args.dataset}_dist.csv', index=True, header=True)
+    print(f'Saved latent embeddings to {args.out}/{args.dataset}_z.csv')

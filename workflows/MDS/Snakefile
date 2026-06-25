@@ -32,7 +32,6 @@ SCRIPTS  = config["scripts"]
 PARTCFG  = config["partition"]
 PROCCFG  = config["proc"]
 TRAINCFG = config["train"]
-DISTCFG  = config["distance"]
 CONSENSUSCFG = config["consensus_cluster"]
 CLINCFG  = config["clin_viz"]
 LATENTPROBE = config.get("latent_probe", {})
@@ -63,14 +62,11 @@ def fold_dir(i):
 _ALL_INPUTS = (
     [str(fold_dir(i) / "train" / "model.pt")                    for i in FOLDS]
     + [str(fold_dir(i) / "eval"  / "eval.csv")                    for i in FOLDS]
-    + [str(fold_dir(i) / "distance" / f"{DSNAME}_dist.csv")       for i in FOLDS]
+    + [str(fold_dir(i) / "distance" / f"{DSNAME}_z.csv")          for i in FOLDS]
     + [str(fold_dir(i) / "viz" / "clin_viz_complete.txt")         for i in FOLDS]
-    + [str(fold_dir(i) / "consensus" / "connectivity.npz")      for i in FOLDS]
     + [
-        str(OUT_ROOT / "consensus" / "consensus_matrix.csv"),
-        str(OUT_ROOT / "consensus" / "final_labels.csv"),
-        str(OUT_ROOT / "consensus" / "k_choice.json"),
-        str(OUT_ROOT / "consensus" / "consensus_heatmap.png"),
+        str(OUT_ROOT / "consensus" / "consensus_clusters.csv"),
+        str(OUT_ROOT / "consensus" / "statistic_summary.csv"),
     ]
 )
 if LATENTPROBE_ENABLED:
@@ -414,21 +410,19 @@ rule latent_probe_aggregate:
 
 
 #################################################################
-# 5.  Create pairwise‑distance matrix
+# 5.  Encode latent embeddings
 #################################################################
-rule threshold:
+rule encode:
     input:
         model = rules.train.output.model,
         expr  = rules.preprocess.output.expr
     output:
-        dist = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_dist.csv"),
         z    = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_z.csv")
     params:
         script   = SCRIPTS["distance"],
         proc_dir = lambda wc: str(fold_dir(wc.fold) / "proc"),
         out_dir  = lambda wc: str(fold_dir(wc.fold) / "distance"),
         dataset  = DSNAME,
-        metric   = DISTCFG["metric"]
     conda:
         "../envs/amlvae.yaml"
     shell:
@@ -438,121 +432,45 @@ rule threshold:
             --proc {params.proc_dir} \
             --out  {params.out_dir} \
             --model_path {input.model} \
-            --dataset {params.dataset} \
-            --metric  {params.metric}
+            --dataset {params.dataset}
         """
 
 
 #################################################################
-# 6.  Consensus clustering — per fold (Louvain on kNN graph)
+# 6.  Consensus clustering (R script, runs once after all folds)
 #################################################################
-rule consensus_fold:
+rule consensus_cluster:
     input:
-        dist = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_dist.csv"),
-        z    = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_z.csv"),
+        z_files = [str(fold_dir(i) / "distance" / f"{DSNAME}_z.csv") for i in FOLDS],
     output:
-        npz  = str(OUT_ROOT / "fold_{fold}" / "consensus" / "connectivity.npz"),
-        meta = str(OUT_ROOT / "fold_{fold}" / "consensus" / "fold_meta.json"),
+        clusters = str(OUT_ROOT / "consensus" / "consensus_clusters.csv"),
+        stats    = str(OUT_ROOT / "consensus" / "statistic_summary.csv"),
     params:
-        script                            = SCRIPTS["consensus_fold"],
-        distance_source                   = CONSENSUSCFG["distance_source"],
-        pairwise_metric                   = CONSENSUSCFG.get("pairwise_metric", "euclidean"),
-        k_nn                              = CONSENSUSCFG.get("k_nn", 15),
-        graph_union                       = CONSENSUSCFG.get("graph_union", True),
-        edge_weight                       = CONSENSUSCFG.get("edge_weight", "inv_dist"),
-        rbf_sigma_scale                   = CONSENSUSCFG.get("rbf_sigma_scale", 1.0),
-        random_state                      = CONSENSUSCFG.get("random_state", 0),
+        script    = SCRIPTS["consensus_cluster"],
+        run_dir   = str(OUT_ROOT),
+        out_dir   = str(OUT_ROOT / "consensus"),
+        dataset   = DSNAME,
+        num_folds = K,
+        k_min     = CONSENSUSCFG.get("k_min", 2),
+        k_max     = CONSENSUSCFG.get("k_max", 10),
+        seed      = CONSENSUSCFG.get("seed", 976),
     conda:
-        "../envs/amlvae.yaml"
+        "../envs/r_cluster.yaml"
     shell:
         """
-        mkdir -p $(dirname {output.npz})
-        python {params.script} \
-            --distance_source {params.distance_source} \
-            --dist_csv {input.dist} \
-            --z_csv {input.z} \
-            --pairwise_metric {params.pairwise_metric} \
-            --k_nn {params.k_nn} \
-            --graph_union {params.graph_union} \
-            --edge_weight {params.edge_weight} \
-            --rbf_sigma_scale {params.rbf_sigma_scale} \
-            --random_state {params.random_state} \
-            --out_npz {output.npz} \
-            --out_meta {output.meta}
-        """
-
-
-#################################################################
-# 7.  Consensus clustering — aggregate across folds
-#################################################################
-rule consensus_aggregate:
-    input:
-        conns = [str(fold_dir(i) / "consensus" / "connectivity.npz") for i in FOLDS],
-    output:
-        matrix = str(OUT_ROOT / "consensus" / "consensus_matrix.csv"),
-        labels = str(OUT_ROOT / "consensus" / "final_labels.csv"),
-        kinfo  = str(OUT_ROOT / "consensus" / "k_choice.json"),
-    params:
-        script                   = SCRIPTS["consensus_aggregate"],
-        partition_method         = CONSENSUSCFG.get("partition_method", "louvain"),
-        consensus_k_nn           = CONSENSUSCFG.get("consensus_k_nn", 15),
-        consensus_graph_union   = CONSENSUSCFG.get("consensus_graph_union", True),
-        consensus_edge_weight   = CONSENSUSCFG.get("consensus_edge_weight", "identity"),
-        random_state             = CONSENSUSCFG.get("random_state", 0),
-        k_min                    = CONSENSUSCFG.get("k_min", 3),
-        k_max                    = CONSENSUSCFG.get("k_max", 12),
-        linkage                  = CONSENSUSCFG.get("linkage", "average"),
-        elbow_metric             = CONSENSUSCFG.get("elbow_metric", "silhouette"),
-        out_dir                  = str(OUT_ROOT / "consensus"),
-    conda:
-        "../envs/amlvae.yaml"
-    shell:
-        """
-        python {params.script} {input.conns} \
-            --partition_method {params.partition_method} \
-            --consensus_k_nn {params.consensus_k_nn} \
-            --consensus_graph_union {params.consensus_graph_union} \
-            --consensus_edge_weight {params.consensus_edge_weight} \
-            --random_state {params.random_state} \
-            --k_min {params.k_min} \
-            --k_max {params.k_max} \
-            --linkage {params.linkage} \
-            --elbow_metric {params.elbow_metric} \
-            --out_dir {params.out_dir}
-        """
-
-
-#################################################################
-# 8.  Consensus heatmap + clinical stripes
-#################################################################
-rule consensus_figure:
-    input:
-        matrix = rules.consensus_aggregate.output.matrix,
-        labels = rules.consensus_aggregate.output.labels,
-        clin   = CONSENSUSCFG.get("clin_path", CLINCFG["clin_path"]),
-    output:
-        png = str(OUT_ROOT / "consensus" / "consensus_heatmap.png"),
-    params:
-        script            = SCRIPTS["consensus_figure"],
-        clin_id_q         = shlex.quote(CONSENSUSCFG.get("clin_id_column", "MLL ID")),
-        annotation_json   = shlex.quote(json.dumps(CONSENSUSCFG.get("annotation_cols", []))),
-        figsize           = CONSENSUSCFG.get("figsize", "14,12"),
-    conda:
-        "../envs/amlvae.yaml"
-    shell:
-        """
-        python {params.script} \
-            --consensus_csv {input.matrix} \
-            --labels_csv {input.labels} \
-            --clin_path {input.clin} \
-            --clin_id_column {params.clin_id_q} \
-            --annotation_cols {params.annotation_json} \
-            --figsize {params.figsize} \
-            --out_png {output.png}
+        mkdir -p {params.out_dir}
+        Rscript {params.script} \
+            --run_dir   {params.run_dir} \
+            --out       {params.out_dir} \
+            --dataset   {params.dataset} \
+            --num_folds {params.num_folds} \
+            --k_min     {params.k_min} \
+            --k_max     {params.k_max} \
+            --seed      {params.seed}
         """
 
 #################################################################
-# 9.  UMAP coloured by clinical variables (per fold)
+# 7.  UMAP coloured by clinical variables (per fold)
 #################################################################
 rule clin_viz:
     input:

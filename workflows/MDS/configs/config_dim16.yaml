@@ -18,9 +18,7 @@ scripts:
   eval: "../scripts/eval.py"
   partition: "../scripts/partition.py"
   distance: "../scripts/distances.py"
-  consensus_fold: "../scripts/consensus_cluster_fold.py"
-  consensus_aggregate: "../scripts/consensus_cluster_aggregate.py"
-  consensus_figure: "../scripts/consensus_cluster_figure.py"
+  consensus_cluster: "../scripts/consensus_cluster.R"
   clin_viz: "../scripts/clin_viz.py"
   latent_probe: "../scripts/latent_probe.py"
   latent_probe_aggregate: "../scripts/latent_probe_aggregate.py"
@@ -80,13 +78,6 @@ train:
   grl_alpha:      0.1
   lambda_adv:     1.0
 
-
-
-# ----------------------------------------------------------------
-# compute pairwise distances and embed all samples
-# ----------------------------------------------------------------
-distance:
-  metric: "euclidean"          # any metric accepted by sklearn.pairwise_distances
 
 
 # ----------------------------------------------------------------
@@ -158,31 +149,9 @@ latent_probe:
 
 
 # ----------------------------------------------------------------
-# Consensus clustering (replaces SNF): Louvain per fold → C → Louvain or elbow
-# partition_method: louvain | elbow_agglomerative
-# distance_source: dist_csv | z_csv
+# Consensus clustering (R-based: PAM + HC over CV folds → co-occurrence)
 # ----------------------------------------------------------------
 consensus_cluster:
-  partition_method: louvain
-  distance_source: dist_csv
-  pairwise_metric: euclidean
-  k_nn: 15
-  graph_union: true
-  edge_weight: inv_dist          # jaccard | rbf | inv_dist
-  rbf_sigma_scale: 1.0
-  random_state: 0
-  consensus_k_nn: 15
-  consensus_graph_union: true
-  consensus_edge_weight: identity   # identity | inv_dist
   k_min: 3
   k_max: 12
-  linkage: average
-  elbow_metric: silhouette
-  clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
-  # Figure stripes: IDs must match dist/z matrix index (often same as clin_viz).
-  clin_id_column: "MLL ID"
-  annotation_cols:
-    - "Final Diagnosis"
-    - "Gender 1=female;2=male"
-    - "TP53"
-  figsize: "14,12"
+  seed:  976
