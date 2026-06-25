@@ -1,27 +1,29 @@
 #################################################################
 # AML‑VAE • Snakemake workflow
+#
+# All derived artifacts live under:
+#   {output_directory}/{run_id}/{proc,tune,train,eval}/...
+# Nothing is written inside the repo.
 #################################################################
-import datetime, pathlib, textwrap
+import datetime
+import pathlib
+
+configfile: "config.yaml"
 
 # ----------------------------------------------------------------
 # Config & convenience shortcuts
 # ----------------------------------------------------------------
-configfile: "config.yaml"
-
 run_id   = config["run_id"] or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-wdir     = f"../runs/{run_id}"
+OUT_ROOT = pathlib.Path(config["output_directory"]) / run_id
 
-DATA     = config["data_dir"]
-PROC_OUT = f"{wdir}/proc"
-TUNE_OUT = f"{wdir}/tune"
-TRAIN_OUT= f"{wdir}/train"
-EVAL_OUT = f"{wdir}/eval"
+DATA       = config["data_dir"]
+PROC_OUT   = str(OUT_ROOT / "proc")
+TUNE_OUT   = str(OUT_ROOT / "tune")
+TRAIN_OUT  = str(OUT_ROOT / "train")
+EVAL_OUT   = str(OUT_ROOT / "eval")
 
 DATASET_NAME = config["proc"]["dataset_name"]
 
-# ----------------------------------------------------------------
-# Rule: all (final targets)
-# ----------------------------------------------------------------
 rule all:
     input:
         f"{PROC_OUT}/{DATASET_NAME}_expr.csv",
@@ -31,29 +33,28 @@ rule all:
         f"{EVAL_OUT}/clin_eval_complete.txt",
         f"{EVAL_OUT}/clin_viz_complete.txt",
 
-# ----------------------------------------------------------------
-# Rule: preprocess expression data
-# ----------------------------------------------------------------
 rule preprocess:
     output:
         expr   = f"{PROC_OUT}/{DATASET_NAME}_expr.csv",
         splits = f"{PROC_OUT}/{DATASET_NAME}_partitions.pt"
     params:
         script = config['scripts']['proc'],
-        args = f"--data {DATA} " +\
-            f"--out {PROC_OUT} " +\
-            f"--target_type {config['proc']['target_type']} " +\
-            f"--gene_selection_method {config['proc']['gene_selection_method']} " +\
-            f"--num_top_genes {config['proc']['num_top_genes']} " +\
-            f"--norm_method {config['proc']['norm_method']}"
+        args = (
+            f"--data {DATA} "
+            f"--out {PROC_OUT} "
+            f"--target_type {config['proc']['target_type']} "
+            f"--gene_selection_method {config['proc']['gene_selection_method']} "
+            f"--num_top_genes {config['proc']['num_top_genes']} "
+            f"--norm_method {config['proc']['norm_method']} "
+            f"--dataset_name {DATASET_NAME} "
+            f"--gene_id_type {config['proc']['gene_id_type']} "
+            f"--sample_id_type {config['proc']['sample_id_type']}"
+        )
     conda:
         "../envs/amlvae.yaml"
     shell:
-        "python {params.script} {params.args}"
+        "mkdir -p {PROC_OUT} && python {params.script} {params.args}"
 
-# ----------------------------------------------------------------
-# Rule: hyper‑parameter search
-# ----------------------------------------------------------------
 rule tune:
     input:
         expr = rules.preprocess.output.expr
@@ -61,25 +62,23 @@ rule tune:
         csv = f"{TUNE_OUT}/amlvae_tune_results.csv"
     params:
         script = config['scripts']['tune'],
-        args =  f"--data {DATA} "+\
-                f"--out {TUNE_OUT} "+\
-                f"--proc {PROC_OUT} "+\
-                f"--target_metric {config['tune']['target_metric']} "+\
-                f"--num_samples {config['tune']['num_samples']} "+\
-                f"--patience {config['tune']['patience']} "+\
-                f"--gpus {config['tune']['gpus']} "+\
-                f"--cpus {config['tune']['cpus']} "+\
-                f"--epochs {config['tune']['epochs']} "+\
-                f"--n_latent {config['n_latent']} "+\
-                f"--dataset_name {config['proc']['dataset_name']}"
+        args = (
+            f"--out {TUNE_OUT} "
+            f"--proc {PROC_OUT} "
+            f"--target_metric {config['tune']['target_metric']} "
+            f"--num_samples {config['tune']['num_samples']} "
+            f"--patience {config['tune']['patience']} "
+            f"--gpus {config['tune']['gpus']} "
+            f"--cpus {config['tune']['cpus']} "
+            f"--epochs {config['tune']['epochs']} "
+            f"--n_latent {config['n_latent']} "
+            f"--dataset_name {DATASET_NAME}"
+        )
     conda:
         "../envs/amlvae.yaml"
     shell:
-        "python {params.script} {params.args}"
+        "mkdir -p {TUNE_OUT} && python {params.script} {params.args}"
 
-# ----------------------------------------------------------------
-# Rule: final training with chosen hyper‑params
-# ----------------------------------------------------------------
 rule train:
     input:
         expr = rules.preprocess.output.expr,
@@ -90,7 +89,7 @@ rule train:
         "../envs/amlvae.yaml"
     params:
         script = config['scripts']['train']
-    run: 
+    run:
         from snakemake.shell import shell
         from amlvae.utils.tune_parsing import best_config, config_to_cli
 
@@ -101,36 +100,32 @@ rule train:
         print(f"Best config: {cfg}")
         print(f"CLI: {cli}")
 
-        shell(f"python {params.script} --data {DATA} --proc {PROC_OUT} --out {TRAIN_OUT} {cli} --epochs {config['train']['epochs']} --patience {config['train']['patience']} --dataset_name {config['proc']['dataset_name']}")
+        shell(
+            f"mkdir -p {TRAIN_OUT} && python {params.script} "
+            f"--proc {PROC_OUT} --out {TRAIN_OUT} {cli} "
+            f"--epochs {config['train']['epochs']} "
+            f"--patience {config['train']['patience']} "
+            f"--dataset_name {DATASET_NAME}"
+        )
 
-# ----------------------------------------------------------------
-# 2.  Rule: evaluate model & make UMAP plots
-# ----------------------------------------------------------------
 rule evaluate:
     input:
-        # pull the artefacts we need to guarantee dependency order
         model  = rules.train.output.model,
-        expr   = rules.preprocess.output.expr,        # used by eval.py
+        expr   = rules.preprocess.output.expr,
         splits = rules.preprocess.output.splits
     output:
         csv   = f"{EVAL_OUT}/eval.csv",
         z_file = f"{EVAL_OUT}/{DATASET_NAME}_z.csv"
-    conda:
-        "../envs/amlvae.yaml"
     params:
         script = config['scripts']['eval']
-
     conda:
-        "envs/amlvae.yaml"
+        "../envs/amlvae.yaml"
     shell:
         """
-        python {params.script} --data {DATA} --proc {PROC_OUT} --out {EVAL_OUT} --model_path {input.model}
+        mkdir -p {EVAL_OUT}
+        python {params.script} --proc {PROC_OUT} --out {EVAL_OUT} --model_path {input.model} --dataset {DATASET_NAME}
         """
 
-
-# ----------------------------------------------------------------
-# Rule: clinical evaluation & extra plots
-# ----------------------------------------------------------------
 rule clin_eval:
     input:
         model   = rules.train.output.model,
@@ -144,6 +139,7 @@ rule clin_eval:
         "../envs/amlvae.yaml"
     shell:
         """
+        mkdir -p {EVAL_OUT}
         python {params.script} \
                --data {DATA} \
                --proc {PROC_OUT} \
@@ -152,14 +148,9 @@ rule clin_eval:
         touch {output.done}
         """
 
-
-# ----------------------------------------------------------------
-# Rule: visualise embedding coloured by clinical features
-# ----------------------------------------------------------------
 rule clin_viz:
     input:
-        z_file = lambda wc: config['clin_viz']['z_path'].format(
-                    EVAL_OUT=EVAL_OUT, dataset_name=DATASET_NAME),
+        z_file = f"{EVAL_OUT}/{DATASET_NAME}_z.csv",
         clin   = config['clin_viz']['clin_path']
     output:
         done = f"{EVAL_OUT}/clin_viz_complete.txt"
@@ -175,6 +166,7 @@ rule clin_viz:
         "../envs/amlvae.yaml"
     shell:
         """
+        mkdir -p {params.out_dir}
         python {params.script} \
                --z_path    {input.z_file} \
                --clin_path {input.clin} \
@@ -184,6 +176,4 @@ rule clin_viz:
                --metric      {params.metric} \
                --clin_vars   '{params.clin_vars}' \
                --seed        {params.seed}
-        # clin_viz.py already writes its own sentinel – just rename/move it
-        #mv {params.out_dir}/clin_viz_complete.txt {output.done}
         """

@@ -1,146 +1,242 @@
-import torch 
+import math
+import json
+import os
+
+import torch
 from torch import nn
 import torch.nn.functional as F
+
 from amlvae.models.utils import get_nonlin, get_norm
-import numpy as np 
-from sklearn.metrics import r2_score
 from amlvae.models.MLP import MLP
+
+LOG2PI = math.log(2.0 * math.pi)
 
 class GradientReverseFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input, alpha):
-        # Save alpha (scale factor) for backward
+    def forward(ctx, x, alpha):
         ctx.alpha = alpha
-        return input.view_as(input)
+        return x.view_as(x)
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Reverse gradient by multiplying with -alpha
-        return grad_output.neg() * ctx.alpha, None
+        return -ctx.alpha * grad_output, None
 
-class GradientReversalLayer(torch.nn.Module):
+
+class GradientReversalLayer(nn.Module):
     def __init__(self, alpha=1.0):
-        super().__init__()
+        super(GradientReversalLayer, self).__init__()
         self.alpha = alpha
 
     def forward(self, x):
-        # We call our custom autograd Function
         return GradientReverseFunction.apply(x, self.alpha)
-    
+
+
 class VAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, n_layers, latent_dim, conditions={}, 
-                 norm='layer', nonlin='elu', variational=True,
-                 dropout=0.):
+    """Variational Autoencoder with a proper Gaussian likelihood.
+
+    The decoder outputs the mean of a Gaussian over input features; per-feature
+    log-variances are free parameters. This lets `beta=1` be a proper ELBO on
+    continuous (e.g. z-scored log-FPKM) data and avoids the MSE/KL scale
+    mismatch that can otherwise collapse the posterior.
+    """
+
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim,
+        n_layers,
+        latent_dim,
+        norm="layer",
+        nonlin="elu",
+        variational=True,
+        dropout=0.0,
+        min_log_var_x=-8.0,
+        max_log_var_x=4.0,
+        conditional_dim=0,
+        advesarial_dim=0,
+        grl_alpha=1.0,
+    ):
         super().__init__()
 
+        self._init_kwargs = {
+            "input_dim": input_dim,
+            "hidden_dim": hidden_dim,
+            "n_layers": n_layers,
+            "latent_dim": latent_dim,
+            "norm": norm,
+            "nonlin": nonlin,
+            "variational": variational,
+            "dropout": dropout,
+            "min_log_var_x": min_log_var_x,
+            "max_log_var_x": max_log_var_x,
+            "conditional_dim": conditional_dim,
+            "advesarial_dim": advesarial_dim,
+            "grl_alpha": grl_alpha,
+        }
+
         self.variational = variational
-        self.latent_dim = latent_dim 
+        self.latent_dim = latent_dim
+        self.input_dim = input_dim
+        self.min_log_var_x = float(min_log_var_x)
+        self.max_log_var_x = float(max_log_var_x)
+        self.conditional_dim = conditional_dim
+        self.advesarial_dim = advesarial_dim
+        self.grl_alpha = grl_alpha
+        
+        nonlin_cls = get_nonlin(nonlin)
+        norm_cls = get_norm(norm)
 
-        nonlin = get_nonlin(nonlin)
-        norm_layer = get_norm(norm)
+        self.encoder = MLP(
+            in_channels=input_dim + conditional_dim,
+            hidden_channels=hidden_dim,
+            out_channels=latent_dim * 2,
+            layers=n_layers,
+            dropout=dropout,
+            nonlin=nonlin_cls,
+            norm=norm_cls,
+            bias=True,
+        )
 
-        if len(conditions) > 0: 
-            mlp = lambda d: torch.nn.Sequential(nn.Linear(latent_dim, latent_dim*4), nonlin(), norm_layer(latent_dim*4), nn.Linear(latent_dim*4, d))
-            self.adv_dict = torch.nn.ModuleDict({key: mlp(cond_dim) for key, cond_dim in conditions.items()})
-        
-        self.encoder = MLP(in_channels      = input_dim,
-                           hidden_channels  = hidden_dim, 
-                           out_channels     = latent_dim*2,
-                           layers           = n_layers,
-                           dropout          = 0, 
-                           nonlin           = nonlin, 
-                           bias             = True)
-        
-        self.decoder = MLP(in_channels      = latent_dim,
-                           hidden_channels  = hidden_dim, 
-                           out_channels     = input_dim,
-                           layers           = n_layers,
-                           dropout          = dropout, 
-                           nonlin           = nonlin, 
-                           bias             = True)
-        
-        self.mask_classifier = MLP(in_channels      = latent_dim, 
-                                      hidden_channels  = hidden_dim, 
-                                      out_channels     = input_dim,
-                                      layers           = n_layers,
-                                      dropout          = dropout, 
-                                      nonlin           = nonlin, 
-                                      bias             = True)
-        
-    def encode(self, x):
+        self.decoder = MLP(
+            in_channels=latent_dim + conditional_dim,
+            hidden_channels=hidden_dim,
+            out_channels=input_dim,
+            layers=n_layers,
+            dropout=dropout,
+            nonlin=nonlin_cls,
+            norm=norm_cls,
+            bias=True,
+        )
+
+        if self.variational:
+            self.log_var_x = nn.Parameter(torch.zeros(input_dim))
+
+        if self.advesarial_dim > 0:
+            self.GRL = GradientReversalLayer(alpha=self.grl_alpha)
+            self.clf = MLP(
+                in_channels=latent_dim,
+                hidden_channels=hidden_dim,
+                out_channels=advesarial_dim,
+                layers=n_layers,
+                dropout=dropout,
+                nonlin=nonlin_cls,
+                norm=norm_cls,
+                bias=True,
+            )
+
+    def _require_x_cond(self, x_cond):
+        if self.conditional_dim > 0 and x_cond is None:
+            raise ValueError(
+                "x_cond is required when conditional_dim > 0 "
+                f"(expected last dim {self.conditional_dim})"
+            )
+
+    def encode(self, x, x_cond=None):
+        self._require_x_cond(x_cond)
+        if x_cond is not None:
+            x = torch.cat([x, x_cond], dim=-1)
         h = self.encoder(x)
-        mu, logvar = h.chunk(2, dim=-1) 
+        mu, logvar = h.chunk(2, dim=-1)
         return mu, logvar
-    
+
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
-    
-    def decode(self, z):
+
+    def decode(self, z, x_cond=None):
+        self._require_x_cond(x_cond)
+        if x_cond is not None:
+            z = torch.cat([z, x_cond], dim=-1)
         return self.decoder(z)
-    
-    @DeprecationWarning 
-    def adversarial(self, z):
 
-        # perform gradient reversal layer (backward gradients will be reversed)
-        z = self.GRL(z)
-        adv_preds = {key: self.adv_dict[key](z) for key in self.adv_dict.keys()}
-        return adv_preds
-    
-    def predict(self, x): 
-        # for reconstrunction evaluation 
-        mu, logvar = self.encode(x.view(-1, x.size(1)))
-        out = self.decode(mu)
-        return out
+    def predict(self, x, x_cond=None):
+        """Deterministic reconstruction (use posterior mean)."""
+        mu, _ = self.encode(x.view(-1, x.size(1)), x_cond=x_cond)
+        return self.decode(mu, x_cond=x_cond)
 
-    def forward(self, x):
-        mu, logvar = self.encode(x.view(-1, x.size(1)))
-        
-        if self.variational: 
+    def forward(self, x, x_cond=None):
+        mu, logvar = self.encode(x.view(-1, x.size(1)), x_cond=x_cond)
+
+        if self.variational:
             z = self.reparameterize(mu, logvar)
-        else: 
+        else:
             z = mu
 
-        out = self.decode(z)
+        xhat = self.decode(z, x_cond=x_cond)
 
-        if hasattr(self, 'adv_dict'):
-            adv_preds = self.adversarial(mu)
-        else: 
-            adv_preds = {} 
+        if self.advesarial_dim > 0:
+            zstar = self.GRL(z)
+            adv_pred = self.clf(zstar)
 
-        mask_hat = self.mask_classifier(z).sigmoid() 
+            return {"xhat": xhat, "mu": mu, "logvar": logvar, "adv_pred": adv_pred}
 
-        return {**{'xhat': out, 'mu': mu, 'logvar': logvar, 'mask_hat':mask_hat}, **adv_preds}
+        return {"xhat": xhat, "mu": mu, "logvar": logvar}
 
-    @staticmethod
-    def loss(x, xhat, mu, logvar, beta=1., mask=None, **kwargs):
+    def loss(self, x, xhat, mu, logvar, beta=1.0, free_bits=0.0, **_):
+        """ELBO with proper Gaussian likelihood.
+
+        Returns a dict with:
+            - loss: nll + beta * kld_clamped  (training objective)
+            - nll: Gaussian negative log-likelihood (per-sample, mean over batch)
+            - kld: analytic KL divergence (per-sample, mean over batch)
+            - kld_raw: unclamped KL (for monitoring)
+            - elbo: nll + kld (no beta, for model selection)
+            - recon_mse: mean squared error (reported only)
         """
-        Computes the VAE loss = recon_loss + KL_divergence.
+        x = x.view(-1, x.size(1))
+
+        if self.variational:
+            log_var_x = self.log_var_x.clamp(self.min_log_var_x, self.max_log_var_x)
+            var_x = log_var_x.exp()
+            nll_per_dim = 0.5 * ((x - xhat) ** 2 / var_x + log_var_x + LOG2PI)
+            nll = nll_per_dim.sum(dim=1).mean()
+
+            kld_per_dim = 0.5 * (mu.pow(2) + logvar.exp() - 1.0 - logvar)
+            kld_raw = kld_per_dim.sum(dim=1).mean()
+            if free_bits and free_bits > 0:
+                kld_clamped = kld_per_dim.mean(dim=0).clamp(min=free_bits).sum()
+            else:
+                kld_clamped = kld_raw
+
+            loss = nll + beta * kld_clamped
+            elbo = nll + kld_raw
+        else:
+            nll = F.mse_loss(xhat, x, reduction="sum") / x.size(0)
+            kld_raw = torch.zeros((), device=x.device, dtype=x.dtype)
+            kld_clamped = kld_raw
+            loss = nll
+            elbo = nll
+
+        recon_mse = F.mse_loss(xhat, x, reduction="mean")
+
+        return {
+            "loss": loss,
+            "nll": nll,
+            "kld": kld_clamped,
+            "kld_raw": kld_raw,
+            "elbo": elbo,
+            "recon_mse": recon_mse,
+        }
+
+    def save(self, path):
+        """Persist model as state_dict + init kwargs.
+
+        Writes `<path>` with the torch state dict and, alongside it,
+        `<path without .pt>_kwargs.json` containing the constructor kwargs.
         """
-        # Reconstruction loss (MSE here; choose appropriate loss for gene expression)
-        recon_loss = F.mse_loss(xhat, x, reduction='sum') / x.size(0)
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        torch.save(
+            {"state_dict": self.state_dict(), "kwargs": self._init_kwargs},
+            path,
+        )
+        kwargs_path = os.path.splitext(path)[0] + "_kwargs.json"
+        with open(kwargs_path, "w") as f:
+            json.dump(self._init_kwargs, f, indent=2)
 
-        std = torch.exp(0.5 * logvar)
-
-        # KL for gene latent
-        P = torch.distributions.Independent(torch.distributions.Normal(mu, std), 1) # posterior
-        Q = torch.distributions.Independent(torch.distributions.Normal(torch.zeros_like(mu), torch.ones_like(std)), 1) # prior
-        kld = torch.distributions.kl.kl_divergence(P, Q).sum() / x.size(0)
-
-        # VIME loss 
-        if mask is not None: 
-            lm = F.binary_cross_entropy(mask, kwargs['mask_hat'], reduction='mean') 
-        else: 
-            lm = 0.0
-
-        total_loss = recon_loss + beta*kld + lm 
-        return total_loss, recon_loss, kld, lm #, recon_loss, kld
-
-    def eval_(self, x, xhat):
-
-        eval_dict = {'MSE': F.mse_loss(xhat, x.view(-1, x.size(1)), reduction='mean'),
-                     'r': np.mean([np.corrcoef(x[:, i].detach().cpu().numpy(), xhat[:,i].detach().cpu().numpy()) for i in range(xhat.size(1))]),
-                     'r2': r2_score(x.detach().cpu().numpy(), xhat.detach().cpu().numpy(), multioutput='uniform_average')}
-    
-        return eval_dict
+    @classmethod
+    def load(cls, path, map_location="cpu"):
+        blob = torch.load(path, map_location=map_location, weights_only=False)
+        model = cls(**blob["kwargs"])
+        model.load_state_dict(blob["state_dict"])
+        return model

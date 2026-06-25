@@ -1,6 +1,8 @@
 /data
 /workflows/runs/
 /workflows/folds/
+/notebooks/
+/deprecated/
 *.snakemake
 
 

@@ -13,12 +13,12 @@ def get_args():
 
     argparser = argparse.ArgumentParser(description=__doc__)
 
-    argparser.add_argument('--z_path', type=str, default='/path/to/dataset_z.csv', 
-                           help='path to embedding file')
-    argparser.add_argument('--clin_path', type=str, default='/path/to/clin.xlsx', 
-                           help='path to embedding file')
-    argparser.add_argument('--out', type=str, default='../output/',
-                            help='path to output dir')
+    argparser.add_argument('--z_path', type=str, required=True,
+                           help='path to latent embedding file (<dataset>_z.csv)')
+    argparser.add_argument('--clin_path', type=str, required=True,
+                           help='path to clinical data (.xlsx or .csv)')
+    argparser.add_argument('--out', type=str, required=True,
+                           help='path to output dir')
     argparser.add_argument('--n_neighbors', type=int, default=15,
                             help='number of neighbors for UMAP')
     argparser.add_argument('--min_dist', type=float, default=0.1,
@@ -47,7 +47,9 @@ if __name__ == '__main__':
     print(args)
     print('---------------------------------------------')
 
-    # seed 
+    import os
+    os.makedirs(args.out, exist_ok=True)
+
     np.random.seed(args.seed)
 
     print('loading data...')

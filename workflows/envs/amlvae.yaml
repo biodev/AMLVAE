@@ -1,37 +1,50 @@
-
 name: amlvae
 
-channels: 
-    - pytorch 
-    - nvidia 
-    - pyg
-    - conda-forge
-    - defaults 
-    - bioconda
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - bioconda
 
 dependencies:
-    - python
-    - matplotlib
-    - pytorch
-    - pytorch-cuda
-    - seaborn
-    - scikit-learn
-    - h5py
-    - scipy
-    - numpy
-    - ray-default 
-    - ray-tune
-    - hyperopt
-    - ipywidgets
-    - captum
-    - shap
-    - openpyxl
-    - gseapy
-    - statsmodels
-    - snakemake
-    - umap
-    - pip
-    - pip:
-        - ipykernel
-        - umap-learn
-        - -e ../../.
+  # core (conda-forge)
+  - conda-forge::python
+  - conda-forge::setuptools<82  # hyperopt needs pkg_resources (removed in setuptools 82+)
+  - conda-forge::numpy<2
+  - conda-forge::pandas
+  - conda-forge::scipy
+  - conda-forge::scikit-learn
+  - conda-forge::pyyaml
+  - conda-forge::openpyxl
+
+  # deep learning (pytorch channel)
+  - pytorch::pytorch
+  - pytorch::pytorch-cuda
+  - pytorch::captum
+
+  # hyperparameter search (conda-forge)
+  - conda-forge::hyperopt
+  - conda-forge::ray-default
+  - conda-forge::ray-tune
+
+  # visualization & notebooks (conda-forge)
+  - conda-forge::matplotlib
+  - conda-forge::seaborn
+  - conda-forge::ipykernel
+  - conda-forge::ipywidgets
+
+  # workflow scripts (bioconda + conda-forge)
+  - bioconda::snakemake
+  - conda-forge::networkx
+  - conda-forge::umap-learn
+
+  # notebooks/ analysis (bioconda + conda-forge)
+  - conda-forge::shap
+  - bioconda::gseapy
+  - conda-forge::statsmodels
+  - conda-forge::scikit-survival
+
+  # install this repo
+  - conda-forge::pip
+  - pip:
+      - -e ../../.

@@ -1,0 +1,50 @@
+name: viper
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - bioconda
+
+dependencies:
+  # core (conda-forge)
+  - conda-forge::python=3.11
+  - conda-forge::setuptools<81  # scanpy / scverse stack compatibility
+  - conda-forge::numpy<2
+  - conda-forge::pandas
+  - conda-forge::scipy
+  - conda-forge::scikit-learn
+  - conda-forge::statsmodels
+  - conda-forge::pyyaml
+  - conda-forge::openpyxl
+
+  # pyviper / scanpy stack (conda-forge)
+  # scanpy 1.12+ requires Python 3.12; stay on 1.11.x for this env
+  - conda-forge::scanpy>=1.11,<1.12
+  - conda-forge::anndata
+  - conda-forge::igraph
+  - conda-forge::leidenalg
+  - conda-forge::pyarrow
+  - conda-forge::h5py
+  - conda-forge::numba
+  - conda-forge::joblib
+  - conda-forge::tqdm
+  - conda-forge::networkx
+  - conda-forge::umap-learn
+
+  # optional GPU backend for pyviper aREA (device='cuda')
+  - pytorch::pytorch
+  - pytorch::pytorch-cuda
+
+  # notebooks
+  - conda-forge::matplotlib
+  - conda-forge::seaborn
+  - conda-forge::ipykernel
+  - conda-forge::ipywidgets
+
+  # pyviper (PyPI: viper-in-python)
+  # install after conda deps so pip does not pull a second torch / scanpy stack
+  - conda-forge::pip
+  - pip:
+      - loompy
+      - viper-in-python==2.1.2

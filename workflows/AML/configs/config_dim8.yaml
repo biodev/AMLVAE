@@ -1,0 +1,49 @@
+# Unique tag for this run – use anything you like
+run_id: "aml_tpm_wgcna_zscore_gene2500_latent8"
+
+# ----------------------------------------------------------------
+# All derived artifacts (proc, tune, train, eval) are written under
+# <output_directory>/<run_id>/...  Nothing goes inside the repo.
+# ----------------------------------------------------------------
+output_directory: "/home/exacloud/gscratch/mcweeney_lab/evans/outputs_/amlvae/AML/"
+
+# Global
+data_dir: "/home/groups/NGSdev/projects/evansmds/data/model_inputs/expression/"
+n_latent: 8
+
+scripts:
+  proc: "../scripts/proc.py"
+  train: "../scripts/train.py"
+  tune: "../scripts/tune.py"
+  eval: "../scripts/eval.py"
+  clin_viz: "../scripts/clin_viz.py"
+  clin_eval: "../scripts/clin_eval.py"
+
+proc:                      # ---------- proc.py arguments ----------
+  target_type: "fpkm_unstranded"       # fpkm
+  gene_selection_method: "wgcna"       # 'variance', 'tcga', 'wgcna'
+  num_top_genes: 2500
+  norm_method: "zscore"                # 'zscore', minmax
+  dataset_name: "aml"
+  gene_id_type: "gene_name"            # 'gene_name', 'gene_id'
+  sample_id_type: "id"                 # 'id', 'sample_id'
+
+tune:                      # ---------- tune.py arguments ----------
+  target_metric: "elbo"   # recon_mse | nll | elbo | r2
+  num_samples: 100
+  patience: 1500
+  gpus: 1
+  cpus: 8
+  epochs: 1500
+
+train:                     # ---------- train.py arguments ----------
+  epochs: 1500
+  patience: 1500
+
+clin_viz:
+  clin_path: "/home/groups/NGSdev/projects/evansmds/data/model_inputs/beataml_clinical_for_inputs.csv"
+  clin_vars: ["overallSurvival", "consensusAMLFusions", "fabBlastMorphology"]
+  n_neighbors: 15
+  min_dist:   0.1
+  metric:     "euclidean"
+  seed:       42

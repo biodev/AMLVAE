@@ -20,9 +20,9 @@ def get_args():
 
     argparser = argparse.ArgumentParser(description=__doc__)
 
-    argparser.add_argument('--run_dir', type=str, default='../../runs/',
-                            help='path to run dir')
-    argparser.add_argument('--out', type=str, default='../output/',
+    argparser.add_argument('--run_dir', type=str, required=True,
+                            help='path to run dir (contains fold_*/distance/<dataset>_dist.csv)')
+    argparser.add_argument('--out', type=str, required=True,
                             help='path to output dir')
     argparser.add_argument('--dataset', type=str, default='aml',
                             help='dataset name')
@@ -228,6 +228,8 @@ if __name__ == '__main__':
     print(args)
     print('---------------------------------------------')
 
+    import os as _os
+    _os.makedirs(args.out, exist_ok=True)
     dists, ids = load(args)
 
     edge_index, edge_weight = similarity_network_fusion(

@@ -1,0 +1,188 @@
+# Unique tag for this run – use anything you like
+run_id: "mds_fpkm_wgcna_zscore_2500_latent128"
+
+# ----------------------------------------------------------------
+# All derived artifacts (partitions, proc, train, eval, distance,
+# consensus, viz) are written under <output_directory>/<run_id>/...
+# Nothing should be written inside the repo.
+# ----------------------------------------------------------------
+output_directory: "/home/exacloud/gscratch/mcweeney_lab/evans/outputs_/amlvae/MDS/"
+
+# Global
+data_dir: "../../../data"
+n_latent: 128
+
+scripts:
+  proc: "../scripts/proc.py"
+  train: "../scripts/train.py"
+  eval: "../scripts/eval.py"
+  partition: "../scripts/partition.py"
+  distance: "../scripts/distances.py"
+  consensus_fold: "../scripts/consensus_cluster_fold.py"
+  consensus_aggregate: "../scripts/consensus_cluster_aggregate.py"
+  consensus_figure: "../scripts/consensus_cluster_figure.py"
+  clin_viz: "../scripts/clin_viz.py"
+  latent_probe: "../scripts/latent_probe.py"
+  latent_probe_aggregate: "../scripts/latent_probe_aggregate.py"
+
+# ----------------------------------------------------------------
+# Cross‑validation partitioning
+# ----------------------------------------------------------------
+partition:
+  fpath:        "/home/groups/NGSdev/projects/evansmds/mds_data/20241219_WTS_Data_Proj805.csv"
+  source_path:  "/home/groups/NGSdev/projects/evansmds/mds_data/805_WTS_source_material.xlsx"
+  id_type_name: "array_id"
+  k:            10
+  seed:         0
+  n_val:        10
+
+
+# ----------------------------------------------------------------
+# processing script
+# ----------------------------------------------------------------
+proc:
+  target_type: "FPKM"                # fpkm
+  gene_selection_method: "wgcna"     # 'variance', 'tcga', 'wgcna'
+  num_top_genes: 2500
+  norm_method: "zscore"              # 'zscore', 'minmax'
+  dataset_name: "mds"
+  gene_id_type: "gene_id"            # 'gene_name', 'gene_id'
+  sample_id_type: "array_id"         # 'id', 'sample_id'
+  clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
+  clin_id_column: "MLL ID"
+  source_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_WTS_source_material.xlsx"
+  conditional_feats: ["gender", "age"]
+
+
+# ----------------------------------------------------------------
+# training script
+# ----------------------------------------------------------------
+# input_dim	hidden_dim	n_layers	latent_dim	norm	nonlin	variational	dropout	min_log_var_x	max_log_var_x
+# 2500	2048	1	128	batch	elu	True	0.485803	-8.0	4.0
+train:
+  epochs:         1500
+  patience:       1500
+  n_hidden:       2048
+  n_layers:       1
+  norm:           "batch"     # AML tune trial 68 (min val_elbo)
+  variational:    True
+  anneal:         False
+  dropout:        0.485803
+  nonlin:         "elu"
+  lr:             1.16e-04
+  l2:             1e-6
+  beta:           1.0
+  batch_size:     64
+  free_bits:      0.5
+  model_selection_metric: "elbo"   # recon_mse | nll | elbo
+  conditional:    true
+  advesarial:     true
+  grl_alpha:      0.1
+  lambda_adv:     1.0
+
+
+# ----------------------------------------------------------------
+# compute pairwise distances and embed all samples
+# ----------------------------------------------------------------
+distance:
+  metric: "euclidean"          # any metric accepted by sklearn.pairwise_distances
+
+
+# ----------------------------------------------------------------
+# clinical‑feature UMAP visualisation
+# ----------------------------------------------------------------
+clin_viz:
+  clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
+  n_neighbors: 15
+  min_dist:    0.1
+  metric:      "cosine"
+  clin_vars: ['Gender 1=female;2=male', "Age", "Clinical Status EN", 'Final Diagnosis',
+              'Prognostic Score Value', "Overall survival (days)"]
+  seed: 0
+
+
+# ----------------------------------------------------------------
+# Latent vs PCA supervised probe (per fold; inner CV on train, test on outer test)
+# Set enabled: true to include latent_probe outputs in rule all.
+# Metric tokens: classification → auroc, accuracy, f1_macro; regression → rmse, mae, r2
+# Model tokens: logistic, svc, rf, gbrt, ridge, elasticnet
+# ----------------------------------------------------------------
+latent_probe:
+  enabled: true
+  clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
+  # Must match expression row ids and train/val/test ids in partitions (see proc.sample_id_type).
+  clin_id_column: "MLL ID"
+  inner_cv_folds: 5
+  random_state: 0
+  pca_fit_scope: train_only   # train_only | train_val
+  n_jobs: 4
+  other_metrics: []
+  targets:
+    "Final Diagnosis":
+      type: classification
+      model: svc
+      metric: auroc
+    "Clinical Status EN":
+      type: classification
+      model: svc
+      metric: auroc
+    "Overall survival (days)":
+      type: regression
+      model: svr
+      metric: r2
+    "Gender 1=female;2=male":
+      type: classification
+      model: svc
+      metric: auroc
+    "Age":
+      type: regression
+      model: svr
+      metric: r2
+    "ASXL1":
+      type: classification
+      model: svc
+      metric: auroc
+    "Prognostic Score Value":
+      type: classification
+      model: svc
+      metric: auroc
+    "% Blasts in PB":
+      type: regression
+      model: svr
+      metric: r2
+    "STAG2":
+      type: classification
+      model: svc
+      metric: auroc
+
+
+
+# ----------------------------------------------------------------
+# Consensus clustering (replaces SNF): Louvain per fold → C → Louvain or elbow
+# partition_method: louvain | elbow_agglomerative
+# distance_source: dist_csv | z_csv
+# ----------------------------------------------------------------
+consensus_cluster:
+  partition_method: louvain
+  distance_source: dist_csv
+  pairwise_metric: euclidean
+  k_nn: 15
+  graph_union: true
+  edge_weight: inv_dist          # jaccard | rbf | inv_dist
+  rbf_sigma_scale: 1.0
+  random_state: 0
+  consensus_k_nn: 15
+  consensus_graph_union: true
+  consensus_edge_weight: identity   # identity | inv_dist
+  k_min: 3
+  k_max: 12
+  linkage: average
+  elbow_metric: silhouette
+  clin_path: "/home/groups/NGSdev/projects/evansmds/mds_data/805_data_20250107.xlsx"
+  # Figure stripes: IDs must match dist/z matrix index (often same as clin_viz).
+  clin_id_column: "MLL ID"
+  annotation_cols:
+    - "Final Diagnosis"
+    - "Gender 1=female;2=male"
+    - "TP53"
+  figsize: "14,12"

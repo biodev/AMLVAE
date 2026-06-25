@@ -1,8 +1,23 @@
 #################################################################
 # AML‑VAE • Cross‑validated workflow
+#
+# All derived artifacts live under:
+#   {output_directory}/{run_id}/
+#     partitions/fold_{i}/{dsname}_{train,val,test}.csv
+#     fold_{i}/proc/{dsname}_expr.csv + {dsname}_partitions.pt
+#     fold_{i}/train/model.pt + model_kwargs.json + training_metrics.csv
+#     fold_{i}/eval/eval.csv
+#     fold_{i}/distance/{dsname}_dist.csv + {dsname}_z.csv
+#     fold_{i}/latent_probe/latent_probe.csv + latent_probe/paired_tests.csv  (optional)
+#     fold_{i}/viz/clin_viz_complete.txt
+#     fold_{i}/consensus/connectivity.npz
+#     consensus/consensus_matrix.csv, consensus_heatmap.png, ...
+#
+# Nothing is written inside the repo.
 #################################################################
-import datetime, pathlib, textwrap, shlex 
-from textwrap import dedent
+import json
+import pathlib
+import shlex
 
 configfile: "config.yaml"
 
@@ -10,49 +25,70 @@ configfile: "config.yaml"
 # Config shortcuts
 # ----------------------------------------------------------------
 run_id   = config["run_id"]
-DATA_DIR = config["data_dir"]
+OUT_ROOT = pathlib.Path(config["output_directory"]) / run_id
 
+DATA_DIR = config["data_dir"]
 SCRIPTS  = config["scripts"]
 PARTCFG  = config["partition"]
 PROCCFG  = config["proc"]
 TRAINCFG = config["train"]
+DISTCFG  = config["distance"]
+CONSENSUSCFG = config["consensus_cluster"]
+CLINCFG  = config["clin_viz"]
+LATENTPROBE = config.get("latent_probe", {})
+LATENTPROBE_ENABLED = bool(LATENTPROBE.get("enabled", False))
+LATENT_CLIN_PATH = LATENTPROBE.get("clin_path", CLINCFG["clin_path"])
+LATENT_CLIN_ID = LATENTPROBE.get("clin_id_column", "MLL ID")
+# Path passed to latent_probe.py (must match --configfile when using configs/config_dim*.yaml).
+_cfg_paths = [pathlib.Path(p).resolve() for p in workflow.configfiles]
+CONFIG_YAML = _cfg_paths[-1] if _cfg_paths else pathlib.Path(workflow.basedir).resolve() / "config.yaml"
 
 K       = int(PARTCFG["k"])
 FOLDS   = range(K)
-FOLDDIR = pathlib.Path(PARTCFG["out_dir"])          # ../folds
+DSNAME  = PROCCFG["dataset_name"]
 
-# Helpers to keep path building tidy -----------------------------------------
-def fdir(fold):               # ../folds/fold_*
-    return FOLDDIR / f"fold_{fold}"
+COND_FEATS = PROCCFG.get("conditional_feats") or []
+CLIN_PATH = PROCCFG.get("clin_path")
+HAS_CLIN_COND = bool(COND_FEATS) and bool(CLIN_PATH)
 
-def wdir(wc):                 # ../runs/<run_id>/fold_*
-    return pathlib.Path(f"../runs/{run_id}") / f"fold_{wc.fold}"
+PART_ROOT = OUT_ROOT / "partitions"
 
-def proc_out(wc):             # …/proc
-    return wdir(wc) / "proc"
+def fold_dir(i):
+    return OUT_ROOT / f"fold_{i}"
 
-def train_out(wc):            # …/train
-    return wdir(wc) / "train"
 
 # ----------------------------------------------------------------
-# Rule: all – final targets are the trained models for every fold
+# Rule: all – final targets for every fold + consensus clustering
 # ----------------------------------------------------------------
+_ALL_INPUTS = (
+    [str(fold_dir(i) / "train" / "model.pt")                    for i in FOLDS]
+    + [str(fold_dir(i) / "eval"  / "eval.csv")                    for i in FOLDS]
+    + [str(fold_dir(i) / "distance" / f"{DSNAME}_dist.csv")       for i in FOLDS]
+    + [str(fold_dir(i) / "viz" / "clin_viz_complete.txt")         for i in FOLDS]
+    + [str(fold_dir(i) / "consensus" / "connectivity.npz")      for i in FOLDS]
+    + [
+        str(OUT_ROOT / "consensus" / "consensus_matrix.csv"),
+        str(OUT_ROOT / "consensus" / "final_labels.csv"),
+        str(OUT_ROOT / "consensus" / "k_choice.json"),
+        str(OUT_ROOT / "consensus" / "consensus_heatmap.png"),
+    ]
+)
+if LATENTPROBE_ENABLED:
+    _ALL_INPUTS += [str(fold_dir(i) / "latent_probe" / "latent_probe.csv") for i in FOLDS]
+    _ALL_INPUTS += [str(OUT_ROOT / "latent_probe" / "paired_tests.csv")]
+
+
 rule all:
     input:
-        [f"../runs/{run_id}/fold_{i}/train/model.pt" for i in FOLDS],
-        [f"../runs/{run_id}/fold_{i}/eval/eval.csv" for i in FOLDS],
-        [f"../runs/{run_id}/fold_{i}/distance/{config['proc']['dataset_name']}_dist.csv" for i in FOLDS],
-        [f"../runs/{run_id}/fold_{i}/viz/clin_viz_complete.txt" for i in FOLDS],
-        f"../runs/{run_id}/snf/{config['proc']['dataset_name']}_edge_index.npy",
-        f"../runs/{run_id}/snf/{config['proc']['dataset_name']}_edge_weight.npy",
-        f"../runs/{run_id}/snf/{config['proc']['dataset_name']}_snf_graph.png"
+        _ALL_INPUTS,
+
 
 #################################################################
 # 1.  Generate K‑fold partitions (runs once, then cached)
 #################################################################
-train_csvs = expand("{out}/fold_{i}/mds_train.csv",      out=FOLDDIR, i=FOLDS)
-val_csvs   = expand("{out}/fold_{i}/mds_validation.csv", out=FOLDDIR, i=FOLDS)
-test_csvs  = expand("{out}/fold_{i}/mds_test.csv",       out=FOLDDIR, i=FOLDS)
+train_csvs = [str(PART_ROOT / f"fold_{i}" / f"{DSNAME}_train.csv")      for i in FOLDS]
+val_csvs   = [str(PART_ROOT / f"fold_{i}" / f"{DSNAME}_validation.csv") for i in FOLDS]
+test_csvs  = [str(PART_ROOT / f"fold_{i}" / f"{DSNAME}_test.csv")       for i in FOLDS]
 
 rule make_partitions:
     output:
@@ -60,14 +96,15 @@ rule make_partitions:
         val_csvs,
         test_csvs
     params:
-        script = SCRIPTS["partition"],
-        fpath   = PARTCFG["fpath"],
-        out    = PARTCFG["out_dir"],
-        k      = PARTCFG["k"],
-        seed   = PARTCFG["seed"],
-        n_val  = PARTCFG["n_val"],
-        idcol  = PARTCFG["id_type_name"],
-        src_path = PARTCFG["source_path"]
+        script   = SCRIPTS["partition"],
+        fpath    = PARTCFG["fpath"],
+        out      = str(PART_ROOT),
+        k        = PARTCFG["k"],
+        seed     = PARTCFG["seed"],
+        n_val    = PARTCFG["n_val"],
+        idcol    = PARTCFG["id_type_name"],
+        src_path = PARTCFG["source_path"],
+        dsname   = DSNAME,
     conda:
         "../envs/amlvae.yaml"
     shell:
@@ -79,106 +116,221 @@ rule make_partitions:
             --k {params.k} \
             --seed {params.seed} \
             --n_val {params.n_val} \
-            --id_type_name {params.idcol}
+            --id_type_name {params.idcol} \
+            --dataset_name {params.dsname}
         """
 
 #################################################################
 # 2.  Pre‑process expression data per fold
 #################################################################
-rule preprocess:
-    # we still declare the three CSVs as inputs so Snakemake knows
-    # when the partitioning step finished and can cache them.
-    input:
-        train = lambda wc: f"{PARTCFG['out_dir']}/fold_{wc.fold}/{PROCCFG['dataset_name']}_train.csv",
-        val   = lambda wc: f"{PARTCFG['out_dir']}/fold_{wc.fold}/{PROCCFG['dataset_name']}_validation.csv",
-        test  = lambda wc: f"{PARTCFG['out_dir']}/fold_{wc.fold}/{PROCCFG['dataset_name']}_test.csv"
-    # outputs are the processed matrix and partition indices
-    output:
-        expr = f"../runs/{run_id}/fold_{{fold}}/proc/{PROCCFG['dataset_name']}_expr.csv",
-        parts = f"../runs/{run_id}/fold_{{fold}}/proc/{PROCCFG['dataset_name']}_partitions.pt"
-    params:
-        script  = SCRIPTS["proc"],
-        data_dir = lambda wc: f"{PARTCFG['out_dir']}/fold_{wc.fold}",
-        out_dir  = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/proc",
-        target_type          = PROCCFG["target_type"],
-        gene_selection_method= PROCCFG["gene_selection_method"],
-        num_top_genes        = PROCCFG["num_top_genes"],
-        norm_method          = PROCCFG["norm_method"],
-        dataset_name         = PROCCFG["dataset_name"],
-        gene_id_type         = PROCCFG["gene_id_type"],
-        sample_id_type       = PROCCFG["sample_id_type"],
-    conda:
-        "../envs/amlvae.yaml"
-    shell:
-        """
-        mkdir -p {params.out_dir}
-        python {params.script} \
-            --data {params.data_dir} \
-            --out  {params.out_dir} \
-            --target_type {params.target_type} \
-            --gene_selection_method {params.gene_selection_method} \
-            --num_top_genes {params.num_top_genes} \
-            --norm_method {params.norm_method} \
-            --dataset_name {params.dataset_name} \
-            --gene_id_type {params.gene_id_type} \
-            --sample_id_type {params.sample_id_type}
-        """
+if HAS_CLIN_COND:
+    rule preprocess:
+        input:
+            train = lambda wc: str(PART_ROOT / f"fold_{wc.fold}" / f"{DSNAME}_train.csv"),
+            val   = lambda wc: str(PART_ROOT / f"fold_{wc.fold}" / f"{DSNAME}_validation.csv"),
+            test  = lambda wc: str(PART_ROOT / f"fold_{wc.fold}" / f"{DSNAME}_test.csv")
+        output:
+            expr  = str(OUT_ROOT / "fold_{fold}" / "proc" / f"{DSNAME}_expr.csv"),
+            parts = str(OUT_ROOT / "fold_{fold}" / "proc" / f"{DSNAME}_partitions.pt"),
+            clin_cond = str(OUT_ROOT / "fold_{fold}" / "proc" / f"{DSNAME}_clin_cond.csv"),
+        params:
+            script                = SCRIPTS["proc"],
+            data_dir              = lambda wc: str(PART_ROOT / f"fold_{wc.fold}"),
+            out_dir               = lambda wc: str(fold_dir(wc.fold) / "proc"),
+            target_type           = PROCCFG["target_type"],
+            gene_selection_method = PROCCFG["gene_selection_method"],
+            num_top_genes         = PROCCFG["num_top_genes"],
+            norm_method           = PROCCFG["norm_method"],
+            dataset_name          = DSNAME,
+            gene_id_type          = PROCCFG["gene_id_type"],
+            sample_id_type        = PROCCFG["sample_id_type"],
+            clin_path             = CLIN_PATH,
+            conditional_feats     = " ".join(COND_FEATS),
+            clin_id_q             = shlex.quote(PROCCFG.get("clin_id_column", "MLL ID")),
+            source_path           = PROCCFG.get("source_path", PARTCFG["source_path"]),
+        conda:
+            "../envs/amlvae.yaml"
+        shell:
+            """
+            mkdir -p {params.out_dir}
+            python {params.script} \
+                --data {params.data_dir} \
+                --out  {params.out_dir} \
+                --target_type {params.target_type} \
+                --gene_selection_method {params.gene_selection_method} \
+                --num_top_genes {params.num_top_genes} \
+                --norm_method {params.norm_method} \
+                --dataset_name {params.dataset_name} \
+                --gene_id_type {params.gene_id_type} \
+                --sample_id_type {params.sample_id_type} \
+                --clin_path {params.clin_path} \
+                --conditional_feats {params.conditional_feats} \
+                --clin_id_column {params.clin_id_q} \
+                --source_path {params.source_path}
+            """
+else:
+    rule preprocess:
+        input:
+            train = lambda wc: str(PART_ROOT / f"fold_{wc.fold}" / f"{DSNAME}_train.csv"),
+            val   = lambda wc: str(PART_ROOT / f"fold_{wc.fold}" / f"{DSNAME}_validation.csv"),
+            test  = lambda wc: str(PART_ROOT / f"fold_{wc.fold}" / f"{DSNAME}_test.csv")
+        output:
+            expr  = str(OUT_ROOT / "fold_{fold}" / "proc" / f"{DSNAME}_expr.csv"),
+            parts = str(OUT_ROOT / "fold_{fold}" / "proc" / f"{DSNAME}_partitions.pt")
+        params:
+            script                = SCRIPTS["proc"],
+            data_dir              = lambda wc: str(PART_ROOT / f"fold_{wc.fold}"),
+            out_dir               = lambda wc: str(fold_dir(wc.fold) / "proc"),
+            target_type           = PROCCFG["target_type"],
+            gene_selection_method = PROCCFG["gene_selection_method"],
+            num_top_genes         = PROCCFG["num_top_genes"],
+            norm_method           = PROCCFG["norm_method"],
+            dataset_name          = DSNAME,
+            gene_id_type          = PROCCFG["gene_id_type"],
+            sample_id_type        = PROCCFG["sample_id_type"],
+        conda:
+            "../envs/amlvae.yaml"
+        shell:
+            """
+            mkdir -p {params.out_dir}
+            python {params.script} \
+                --data {params.data_dir} \
+                --out  {params.out_dir} \
+                --target_type {params.target_type} \
+                --gene_selection_method {params.gene_selection_method} \
+                --num_top_genes {params.num_top_genes} \
+                --norm_method {params.norm_method} \
+                --dataset_name {params.dataset_name} \
+                --gene_id_type {params.gene_id_type} \
+                --sample_id_type {params.sample_id_type}
+            """
 
 #################################################################
 # 3.  Train AML‑VAE per fold
 #################################################################
-rule train:
-    input:
-        expr = rules.preprocess.output.expr
-    output:
-        model = f"../runs/{run_id}/fold_{{fold}}/train/model.pt"
-    params:
-        script    = SCRIPTS["train"],
-        proc_dir  = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/proc",
-        train_dir = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/train",
-        # -- the rest of the hyper‑params exactly as before --
-        epochs    = TRAINCFG["epochs"],
-        patience  = TRAINCFG["patience"],
-        n_hidden  = TRAINCFG["n_hidden"],
-        n_latent  = config["n_latent"],
-        n_layers  = TRAINCFG["n_layers"],
-        norm      = TRAINCFG["norm"],
-        variational        = TRAINCFG["variational"],
-        anneal             = TRAINCFG["anneal"],
-        dropout   = TRAINCFG["dropout"],
-        nonlin    = TRAINCFG["nonlin"],
-        lr        = TRAINCFG["lr"],
-        l2        = TRAINCFG["l2"],
-        beta      = TRAINCFG["beta"],
-        batch_size = TRAINCFG["batch_size"],
-        dsname    = PROCCFG["dataset_name"],
-        masked_prob = TRAINCFG.get("masked_prob", 0.0),
-    conda:
-        "../envs/amlvae.yaml"
-    shell:
-        """
-        mkdir -p {params.train_dir}
-        python {params.script} \
-            --data {DATA_DIR} \
-            --proc {params.proc_dir} \
-            --out  {params.train_dir} \
-            --dataset_name {params.dsname} \
-            --epochs {params.epochs} \
-            --patience {params.patience} \
-            --n_hidden {params.n_hidden} \
-            --n_latent {params.n_latent} \
-            --n_layers {params.n_layers} \
-            --norm {params.norm} \
-            --variational {params.variational} \
-            --anneal {params.anneal} \
-            --dropout {params.dropout} \
-            --nonlin {params.nonlin} \
-            --lr {params.lr} \
-            --l2 {params.l2} \
-            --beta {params.beta} \
-            --batch_size {params.batch_size} \
-            --masked_prob {params.masked_prob}
-        """
+if HAS_CLIN_COND:
+    rule train:
+        input:
+            expr = rules.preprocess.output.expr,
+            clin_cond = rules.preprocess.output.clin_cond,
+        output:
+            model = str(OUT_ROOT / "fold_{fold}" / "train" / "model.pt")
+        params:
+            script    = SCRIPTS["train"],
+            proc_dir  = lambda wc: str(fold_dir(wc.fold) / "proc"),
+            train_dir = lambda wc: str(fold_dir(wc.fold) / "train"),
+            epochs    = TRAINCFG["epochs"],
+            patience  = TRAINCFG["patience"],
+            n_hidden  = TRAINCFG["n_hidden"],
+            n_latent  = config["n_latent"],
+            n_layers  = TRAINCFG["n_layers"],
+            norm      = TRAINCFG["norm"],
+            variational = TRAINCFG["variational"],
+            anneal    = TRAINCFG["anneal"],
+            dropout   = TRAINCFG["dropout"],
+            nonlin    = TRAINCFG["nonlin"],
+            lr        = TRAINCFG["lr"],
+            l2        = TRAINCFG["l2"],
+            beta      = TRAINCFG["beta"],
+            batch_size  = TRAINCFG["batch_size"],
+            free_bits   = TRAINCFG.get("free_bits", 0.0),
+            selection = TRAINCFG.get("model_selection_metric", "recon_mse"),
+            conditional = TRAINCFG.get("conditional", False),
+            adversarial = TRAINCFG.get("adversarial", False),
+            grl_alpha   = TRAINCFG.get("grl_alpha", 1.0),
+            lambda_adv  = TRAINCFG.get("lambda_adv", 1.0),
+            dsname    = DSNAME,
+        conda:
+            "../envs/amlvae.yaml"
+        shell:
+            """
+            mkdir -p {params.train_dir}
+            python {params.script} \
+                --proc {params.proc_dir} \
+                --out  {params.train_dir} \
+                --dataset_name {params.dsname} \
+                --epochs {params.epochs} \
+                --patience {params.patience} \
+                --n_hidden {params.n_hidden} \
+                --n_latent {params.n_latent} \
+                --n_layers {params.n_layers} \
+                --norm {params.norm} \
+                --variational {params.variational} \
+                --anneal {params.anneal} \
+                --dropout {params.dropout} \
+                --nonlin {params.nonlin} \
+                --lr {params.lr} \
+                --l2 {params.l2} \
+                --beta {params.beta} \
+                --batch_size {params.batch_size} \
+                --free_bits {params.free_bits} \
+                --model_selection_metric {params.selection} \
+                --conditional {params.conditional} \
+                --adversarial {params.adversarial} \
+                --grl_alpha {params.grl_alpha} \
+                --lambda_adv {params.lambda_adv}
+            """
+else:
+    rule train:
+        input:
+            expr = rules.preprocess.output.expr,
+        output:
+            model = str(OUT_ROOT / "fold_{fold}" / "train" / "model.pt")
+        params:
+            script    = SCRIPTS["train"],
+            proc_dir  = lambda wc: str(fold_dir(wc.fold) / "proc"),
+            train_dir = lambda wc: str(fold_dir(wc.fold) / "train"),
+            epochs    = TRAINCFG["epochs"],
+            patience  = TRAINCFG["patience"],
+            n_hidden  = TRAINCFG["n_hidden"],
+            n_latent  = config["n_latent"],
+            n_layers  = TRAINCFG["n_layers"],
+            norm      = TRAINCFG["norm"],
+            variational = TRAINCFG["variational"],
+            anneal    = TRAINCFG["anneal"],
+            dropout   = TRAINCFG["dropout"],
+            nonlin    = TRAINCFG["nonlin"],
+            lr        = TRAINCFG["lr"],
+            l2        = TRAINCFG["l2"],
+            beta      = TRAINCFG["beta"],
+            batch_size  = TRAINCFG["batch_size"],
+            free_bits   = TRAINCFG.get("free_bits", 0.0),
+            selection = TRAINCFG.get("model_selection_metric", "recon_mse"),
+            conditional = TRAINCFG.get("conditional", False),
+            adversarial = TRAINCFG.get("adversarial", False),
+            grl_alpha   = TRAINCFG.get("grl_alpha", 1.0),
+            lambda_adv  = TRAINCFG.get("lambda_adv", 1.0),
+            dsname    = DSNAME,
+        conda:
+            "../envs/amlvae.yaml"
+        shell:
+            """
+            mkdir -p {params.train_dir}
+            python {params.script} \
+                --proc {params.proc_dir} \
+                --out  {params.train_dir} \
+                --dataset_name {params.dsname} \
+                --epochs {params.epochs} \
+                --patience {params.patience} \
+                --n_hidden {params.n_hidden} \
+                --n_latent {params.n_latent} \
+                --n_layers {params.n_layers} \
+                --norm {params.norm} \
+                --variational {params.variational} \
+                --anneal {params.anneal} \
+                --dropout {params.dropout} \
+                --nonlin {params.nonlin} \
+                --lr {params.lr} \
+                --l2 {params.l2} \
+                --beta {params.beta} \
+                --batch_size {params.batch_size} \
+                --free_bits {params.free_bits} \
+                --model_selection_metric {params.selection} \
+                --conditional {params.conditional} \
+                --adversarial {params.adversarial} \
+                --grl_alpha {params.grl_alpha} \
+                --lambda_adv {params.lambda_adv}
+            """
 
 
 #################################################################
@@ -187,47 +339,95 @@ rule train:
 rule evaluate:
     input:
         model = rules.train.output.model,
-        expr  = rules.preprocess.output.expr,      # ensures preprocessing done
-        parts = rules.preprocess.output.parts      # ensures partitions saved
+        expr  = rules.preprocess.output.expr,
+        parts = rules.preprocess.output.parts
     output:
-        csv = f"../runs/{run_id}/fold_{{fold}}/eval/eval.csv"
+        csv = str(OUT_ROOT / "fold_{fold}" / "eval" / "eval.csv")
     params:
-        script    = SCRIPTS["eval"],
-        proc_dir  = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/proc",
-        out_dir   = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/eval",
-        data_dir  = DATA_DIR,                        
-        dataset   = config["proc"]["dataset_name"],
+        script   = SCRIPTS["eval"],
+        proc_dir = lambda wc: str(fold_dir(wc.fold) / "proc"),
+        out_dir  = lambda wc: str(fold_dir(wc.fold) / "eval"),
+        dataset  = DSNAME,
     conda:
         "../envs/amlvae.yaml"
     shell:
         """
         mkdir -p {params.out_dir}
         python {params.script} \
-            --data {params.data_dir} \
             --proc {params.proc_dir} \
             --out  {params.out_dir} \
             --model_path {input.model} \
-            --dataset {params.dataset} \
+            --dataset {params.dataset}
         """
 
 
 #################################################################
-# 5.  Create pairwise‑distance matrix (threshold.py)
+# 4b. Supervised latent probe (VAE μ vs PCA), per fold
 #################################################################
-DISTCFG = config["distance"]
+rule latent_probe:
+    input:
+        config_yaml = str(CONFIG_YAML),
+        model = rules.train.output.model,
+        expr  = rules.preprocess.output.expr,
+        parts = rules.preprocess.output.parts,
+        clin  = LATENT_CLIN_PATH,
+    output:
+        csv = str(OUT_ROOT / "fold_{fold}" / "latent_probe" / "latent_probe.csv"),
+    params:
+        script         = SCRIPTS["latent_probe"],
+        proc_dir       = lambda wc: str(fold_dir(wc.fold) / "proc"),
+        out_path       = lambda wc: str(fold_dir(wc.fold) / "latent_probe" / "latent_probe.csv"),
+        dataset        = DSNAME,
+        clin_id_q      = shlex.quote(LATENT_CLIN_ID),
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        mkdir -p $(dirname {params.out_path})
+        python {params.script} \
+            --proc {params.proc_dir} \
+            --model_path {input.model} \
+            --dataset {params.dataset} \
+            --out {params.out_path} \
+            --clin_path {input.clin} \
+            --clin_id_column {params.clin_id_q} \
+            --config_yaml {input.config_yaml}
+        """
 
+
+#################################################################
+# 4c. Aggregate latent_probe across folds (paired VAE vs PCA t-tests)
+#################################################################
+rule latent_probe_aggregate:
+    input:
+        fold_csvs = [str(fold_dir(i) / "latent_probe" / "latent_probe.csv") for i in FOLDS],
+    output:
+        csv = str(OUT_ROOT / "latent_probe" / "paired_tests.csv"),
+    params:
+        script = SCRIPTS["latent_probe_aggregate"],
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        python {params.script} --inputs {input.fold_csvs} --out {output.csv}
+        """
+
+
+#################################################################
+# 5.  Create pairwise‑distance matrix
+#################################################################
 rule threshold:
     input:
-        model = rules.train.output.model,          # need trained VAE
-        expr  = rules.preprocess.output.expr       # ensures pre‑proc done
+        model = rules.train.output.model,
+        expr  = rules.preprocess.output.expr
     output:
-        dist = f"../runs/{run_id}/fold_{{fold}}/distance/{PROCCFG['dataset_name']}_dist.csv",
-        z = f"../runs/{run_id}/fold_{{fold}}/distance/{PROCCFG['dataset_name']}_z.csv"
+        dist = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_dist.csv"),
+        z    = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_z.csv")
     params:
-        script   = config["scripts"]["distance"],
-        proc_dir = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/proc",
-        out_dir  = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/distance",
-        dataset  = PROCCFG["dataset_name"],
+        script   = SCRIPTS["distance"],
+        proc_dir = lambda wc: str(fold_dir(wc.fold) / "proc"),
+        out_dir  = lambda wc: str(fold_dir(wc.fold) / "distance"),
+        dataset  = DSNAME,
         metric   = DISTCFG["metric"]
     conda:
         "../envs/amlvae.yaml"
@@ -235,7 +435,6 @@ rule threshold:
         """
         mkdir -p {params.out_dir}
         python {params.script} \
-            --data {DATA_DIR} \
             --proc {params.proc_dir} \
             --out  {params.out_dir} \
             --model_path {input.model} \
@@ -245,65 +444,125 @@ rule threshold:
 
 
 #################################################################
-# 6.  Similarity Network Fusion (runs once after all folds done)
+# 6.  Consensus clustering — per fold (Louvain on kNN graph)
 #################################################################
-SNFCFG = config["snf"]
-
-rule snf:
-    # distance matrices from every fold are inputs
+rule consensus_fold:
     input:
-        expand(
-            "../runs/{run_id}/fold_{fold}/distance/{dataset}_dist.csv",
-            run_id=run_id,
-            fold=FOLDS,
-            dataset=PROCCFG["dataset_name"],
-        )
+        dist = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_dist.csv"),
+        z    = str(OUT_ROOT / "fold_{fold}" / "distance" / f"{DSNAME}_z.csv"),
     output:
-        edge_index = f"../runs/{run_id}/snf/{PROCCFG['dataset_name']}_edge_index.npy",
-        edge_weight= f"../runs/{run_id}/snf/{PROCCFG['dataset_name']}_edge_weight.npy",
-        graph_png = f"../runs/{run_id}/snf/{PROCCFG['dataset_name']}_snf_graph.png"
+        npz  = str(OUT_ROOT / "fold_{fold}" / "consensus" / "connectivity.npz"),
+        meta = str(OUT_ROOT / "fold_{fold}" / "consensus" / "fold_meta.json"),
     params:
-        script    = config["scripts"]["snf"],
-        run_dir   = f"../runs/{run_id}",
-        out_dir   = f"../runs/{run_id}/snf",
-        dataset   = PROCCFG["dataset_name"],
-        num_folds = K,
-        k         = SNFCFG["k"],
-        mu        = SNFCFG["mu"],
-        T         = SNFCFG["T"],
-        edge_thr_q  = SNFCFG["edge_thr_q"],
-        seed      = SNFCFG["seed"]
+        script                            = SCRIPTS["consensus_fold"],
+        distance_source                   = CONSENSUSCFG["distance_source"],
+        pairwise_metric                   = CONSENSUSCFG.get("pairwise_metric", "euclidean"),
+        k_nn                              = CONSENSUSCFG.get("k_nn", 15),
+        graph_union                       = CONSENSUSCFG.get("graph_union", True),
+        edge_weight                       = CONSENSUSCFG.get("edge_weight", "inv_dist"),
+        rbf_sigma_scale                   = CONSENSUSCFG.get("rbf_sigma_scale", 1.0),
+        random_state                      = CONSENSUSCFG.get("random_state", 0),
     conda:
         "../envs/amlvae.yaml"
     shell:
         """
-        mkdir -p {params.out_dir}
+        mkdir -p $(dirname {output.npz})
         python {params.script} \
-            --run_dir   {params.run_dir} \
-            --out       {params.out_dir} \
-            --dataset   {params.dataset} \
-            --num_folds {params.num_folds} \
-            --k         {params.k} \
-            --mu        {params.mu} \
-            --T         {params.T} \
-            --edge_thr_q  {params.edge_thr_q} \
-            --seed      {params.seed}
+            --distance_source {params.distance_source} \
+            --dist_csv {input.dist} \
+            --z_csv {input.z} \
+            --pairwise_metric {params.pairwise_metric} \
+            --k_nn {params.k_nn} \
+            --graph_union {params.graph_union} \
+            --edge_weight {params.edge_weight} \
+            --rbf_sigma_scale {params.rbf_sigma_scale} \
+            --random_state {params.random_state} \
+            --out_npz {output.npz} \
+            --out_meta {output.meta}
+        """
+
+
+#################################################################
+# 7.  Consensus clustering — aggregate across folds
+#################################################################
+rule consensus_aggregate:
+    input:
+        conns = [str(fold_dir(i) / "consensus" / "connectivity.npz") for i in FOLDS],
+    output:
+        matrix = str(OUT_ROOT / "consensus" / "consensus_matrix.csv"),
+        labels = str(OUT_ROOT / "consensus" / "final_labels.csv"),
+        kinfo  = str(OUT_ROOT / "consensus" / "k_choice.json"),
+    params:
+        script                   = SCRIPTS["consensus_aggregate"],
+        partition_method         = CONSENSUSCFG.get("partition_method", "louvain"),
+        consensus_k_nn           = CONSENSUSCFG.get("consensus_k_nn", 15),
+        consensus_graph_union   = CONSENSUSCFG.get("consensus_graph_union", True),
+        consensus_edge_weight   = CONSENSUSCFG.get("consensus_edge_weight", "identity"),
+        random_state             = CONSENSUSCFG.get("random_state", 0),
+        k_min                    = CONSENSUSCFG.get("k_min", 3),
+        k_max                    = CONSENSUSCFG.get("k_max", 12),
+        linkage                  = CONSENSUSCFG.get("linkage", "average"),
+        elbow_metric             = CONSENSUSCFG.get("elbow_metric", "silhouette"),
+        out_dir                  = str(OUT_ROOT / "consensus"),
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        python {params.script} {input.conns} \
+            --partition_method {params.partition_method} \
+            --consensus_k_nn {params.consensus_k_nn} \
+            --consensus_graph_union {params.consensus_graph_union} \
+            --consensus_edge_weight {params.consensus_edge_weight} \
+            --random_state {params.random_state} \
+            --k_min {params.k_min} \
+            --k_max {params.k_max} \
+            --linkage {params.linkage} \
+            --elbow_metric {params.elbow_metric} \
+            --out_dir {params.out_dir}
+        """
+
+
+#################################################################
+# 8.  Consensus heatmap + clinical stripes
+#################################################################
+rule consensus_figure:
+    input:
+        matrix = rules.consensus_aggregate.output.matrix,
+        labels = rules.consensus_aggregate.output.labels,
+        clin   = CONSENSUSCFG.get("clin_path", CLINCFG["clin_path"]),
+    output:
+        png = str(OUT_ROOT / "consensus" / "consensus_heatmap.png"),
+    params:
+        script            = SCRIPTS["consensus_figure"],
+        clin_id_q         = shlex.quote(CONSENSUSCFG.get("clin_id_column", "MLL ID")),
+        annotation_json   = shlex.quote(json.dumps(CONSENSUSCFG.get("annotation_cols", []))),
+        figsize           = CONSENSUSCFG.get("figsize", "14,12"),
+    conda:
+        "../envs/amlvae.yaml"
+    shell:
+        """
+        python {params.script} \
+            --consensus_csv {input.matrix} \
+            --labels_csv {input.labels} \
+            --clin_path {input.clin} \
+            --clin_id_column {params.clin_id_q} \
+            --annotation_cols {params.annotation_json} \
+            --figsize {params.figsize} \
+            --out_png {output.png}
         """
 
 #################################################################
-# 7.  UMAP coloured by clinical variables (per fold)
+# 9.  UMAP coloured by clinical variables (per fold)
 #################################################################
-CLINCFG = config["clin_viz"]
-
 rule clin_viz:
     input:
-        z_file    = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/distance/{PROCCFG['dataset_name']}_z.csv",
+        z_file    = lambda wc: str(fold_dir(wc.fold) / "distance" / f"{DSNAME}_z.csv"),
         clin_file = CLINCFG["clin_path"]
     output:
-        complete_flag = f"../runs/{run_id}/fold_{{fold}}/viz/clin_viz_complete.txt"
+        complete_flag = str(OUT_ROOT / "fold_{fold}" / "viz" / "clin_viz_complete.txt")
     params:
-        script      = config["scripts"]["clin_viz"],
-        out_dir     = lambda wc: f"../runs/{run_id}/fold_{wc.fold}/viz",
+        script      = SCRIPTS["clin_viz"],
+        out_dir     = lambda wc: str(fold_dir(wc.fold) / "viz"),
         n_neighbors = CLINCFG["n_neighbors"],
         min_dist    = CLINCFG["min_dist"],
         metric      = CLINCFG["metric"],
